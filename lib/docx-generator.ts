@@ -224,8 +224,23 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       continue;
     }
 
-    // Handle superscript: x^{content} or x^2
-    const superMatch = remaining.match(/^([a-zA-Z0-9\)\]])(?:\^\{([^{}]*)\}|\^([a-zA-Z0-9]))/);
+    // Handle standalone superscript without explicit base: ^{content} or ^char
+    // This occurs when the base was already parsed (e.g., "3" is already a MathRun)
+    const standaloneSuperMatch = remaining.match(/^\^\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
+    if (standaloneSuperMatch && elements.length > 0) {
+      const lastElement = elements.pop()!;
+      elements.push(
+        new MathSuperScript({
+          children: [lastElement],
+          superScript: parseLatexToDocxMath(standaloneSuperMatch[1]),
+        })
+      );
+      remaining = remaining.slice(standaloneSuperMatch[0].length);
+      continue;
+    }
+
+    // Handle superscript with base: x^{content} or x^2
+    const superMatch = remaining.match(/^([a-zA-Z0-9\)\]])(?:\^\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}|\^([a-zA-Z0-9]))/);
     if (superMatch) {
       const superContent = superMatch[2] || superMatch[3];
       elements.push(
@@ -238,8 +253,22 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       continue;
     }
 
-    // Handle subscript: x_{content} or x_2
-    const subMatch = remaining.match(/^([a-zA-Z0-9])(?:_\{([^{}]*)\}|_([a-zA-Z0-9]))/);
+    // Handle standalone subscript without explicit base: _{content} or _char
+    const standaloneSubMatch = remaining.match(/^_\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
+    if (standaloneSubMatch && elements.length > 0) {
+      const lastElement = elements.pop()!;
+      elements.push(
+        new MathSubScript({
+          children: [lastElement],
+          subScript: parseLatexToDocxMath(standaloneSubMatch[1]),
+        })
+      );
+      remaining = remaining.slice(standaloneSubMatch[0].length);
+      continue;
+    }
+
+    // Handle subscript with base: x_{content} or x_2
+    const subMatch = remaining.match(/^([a-zA-Z0-9])(?:_\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}|_([a-zA-Z0-9]))/);
     if (subMatch) {
       const subContent = subMatch[2] || subMatch[3];
       elements.push(
@@ -292,6 +321,7 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       "\\times": "×",
       "\\div": "÷",
       "\\cdot": "·",
+      "\\centerdot": "·",
       "\\ast": "∗",
       "\\star": "⋆",
       "\\bullet": "•",
@@ -410,25 +440,45 @@ function processInlineContent(
       const mathContent = parseLatexToDocxMath((child as MathNode).value);
       runs.push(new DocxMath({ children: mathContent }));
     } else if (child.type === "strong" && "children" in child) {
-      const strongChildren = processInlineContent(
-        (child as { children: Array<TextNode | MathNode | PhrasingContent> }).children
-      );
-      for (const c of strongChildren) {
-        if (c instanceof TextRun) {
-          runs.push(new TextRun({ text: (c as unknown as { text: string }).text || "", bold: true }));
+      // Process strong (bold) children
+      const strongChild = child as { children: Array<TextNode | MathNode | PhrasingContent> };
+      for (const subChild of strongChild.children) {
+        if (subChild.type === "text") {
+          runs.push(new TextRun({ text: (subChild as TextNode).value, bold: true }));
+        } else if (subChild.type === "inlineMath") {
+          const mathContent = parseLatexToDocxMath((subChild as MathNode).value);
+          runs.push(new DocxMath({ children: mathContent }));
         } else {
-          runs.push(c);
+          // Recursively process other nested content
+          const nestedRuns = processInlineContent([subChild]);
+          for (const run of nestedRuns) {
+            if (run instanceof TextRun) {
+              runs.push(new TextRun({ text: (run as any).options?.text || "", bold: true }));
+            } else {
+              runs.push(run);
+            }
+          }
         }
       }
     } else if (child.type === "emphasis" && "children" in child) {
-      const emChildren = processInlineContent(
-        (child as { children: Array<TextNode | MathNode | PhrasingContent> }).children
-      );
-      for (const c of emChildren) {
-        if (c instanceof TextRun) {
-          runs.push(new TextRun({ text: (c as unknown as { text: string }).text || "", italics: true }));
+      // Process emphasis (italic) children
+      const emChild = child as { children: Array<TextNode | MathNode | PhrasingContent> };
+      for (const subChild of emChild.children) {
+        if (subChild.type === "text") {
+          runs.push(new TextRun({ text: (subChild as TextNode).value, italics: true }));
+        } else if (subChild.type === "inlineMath") {
+          const mathContent = parseLatexToDocxMath((subChild as MathNode).value);
+          runs.push(new DocxMath({ children: mathContent }));
         } else {
-          runs.push(c);
+          // Recursively process other nested content
+          const nestedRuns = processInlineContent([subChild]);
+          for (const run of nestedRuns) {
+            if (run instanceof TextRun) {
+              runs.push(new TextRun({ text: (run as any).options?.text || "", italics: true }));
+            } else {
+              runs.push(run);
+            }
+          }
         }
       }
     } else if (child.type === "link" && "children" in child) {
@@ -460,8 +510,105 @@ function getHeadingLevel(depth: number): (typeof HeadingLevel)[keyof typeof Head
 // Process AST nodes to paragraphs
 function processNodes(nodes: ContentNode[]): Paragraph[] {
   const paragraphs: Paragraph[] = [];
-
-  for (const node of nodes) {
+  
+  // Pre-process to merge list items that are split across multiple list nodes
+  const mergedNodes: ContentNode[] = [];
+  let currentListItems: any[] = [];
+  let currentListOrdered: boolean | null = null;
+  
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    
+    if (node.type === "list") {
+      const listNode = node as ListNode;
+      
+      // If this is the same type of list, accumulate items
+      if (currentListOrdered === listNode.ordered) {
+        // Check if there are math paragraphs before this list continuation
+        // and associate them with the last item
+        while (mergedNodes.length > 0 && mergedNodes[mergedNodes.length - 1].type === "paragraph") {
+          const lastNode = mergedNodes[mergedNodes.length - 1] as ParagraphNode;
+          const isOnlyMath = lastNode.children.length === 1 && lastNode.children[0].type === "inlineMath";
+          
+          if (isOnlyMath && currentListItems.length > 0) {
+            // Add this math paragraph as a child of the last list item
+            const lastItem = currentListItems[currentListItems.length - 1];
+            lastItem.children.push(lastNode);
+            mergedNodes.pop(); // Remove from merged nodes
+          } else {
+            break;
+          }
+        }
+        
+        // Add items from this list to current accumulation
+        currentListItems.push(...listNode.children);
+      } else {
+        // Different list type or first list - flush previous if any
+        if (currentListItems.length > 0) {
+          mergedNodes.push({
+            type: "list",
+            ordered: currentListOrdered!,
+            children: currentListItems,
+          } as ListNode);
+          currentListItems = [];
+        }
+        
+        // Start new list accumulation
+        currentListOrdered = listNode.ordered;
+        currentListItems = [...listNode.children];
+      }
+    } else if (node.type === "paragraph") {
+      const paraNode = node as ParagraphNode;
+      const isOnlyMath = paraNode.children.length === 1 && paraNode.children[0].type === "inlineMath";
+      
+      if (isOnlyMath && currentListItems.length > 0) {
+        // This is likely a math equation that belongs to the previous list item
+        // Add it as a child of the last list item
+        const lastItem = currentListItems[currentListItems.length - 1];
+        if (lastItem && lastItem.children) {
+          lastItem.children.push(paraNode);
+        }
+      } else {
+        // Flush any accumulated list items
+        if (currentListItems.length > 0) {
+          mergedNodes.push({
+            type: "list",
+            ordered: currentListOrdered!,
+            children: currentListItems,
+          } as ListNode);
+          currentListItems = [];
+          currentListOrdered = null;
+        }
+        
+        mergedNodes.push(node);
+      }
+    } else {
+      // Other node types - flush list if any
+      if (currentListItems.length > 0) {
+        mergedNodes.push({
+          type: "list",
+          ordered: currentListOrdered!,
+          children: currentListItems,
+        } as ListNode);
+        currentListItems = [];
+        currentListOrdered = null;
+      }
+      
+      mergedNodes.push(node);
+    }
+  }
+  
+  // Flush any remaining list items
+  if (currentListItems.length > 0) {
+    mergedNodes.push({
+      type: "list",
+      ordered: currentListOrdered!,
+      children: currentListItems,
+    } as ListNode);
+  }
+  
+  // Now process the merged nodes
+  for (const node of mergedNodes) {
     if (node.type === "heading") {
       const headingNode = node as HeadingNode;
       const runs = processInlineContent(headingNode.children);
@@ -474,14 +621,32 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
       );
     } else if (node.type === "paragraph") {
       const paragraphNode = node as ParagraphNode;
-      const runs = processInlineContent(paragraphNode.children);
-      if (runs.length > 0) {
+      
+      // Check if this paragraph contains only inline math (display math misidentified)
+      const isOnlyMath = paragraphNode.children.length === 1 && 
+                         paragraphNode.children[0].type === "inlineMath";
+      
+      if (isOnlyMath) {
+        // Treat inline math in its own paragraph as display math
+        const mathNode = paragraphNode.children[0] as MathNode;
+        const mathContent = parseLatexToDocxMath(mathNode.value);
         paragraphs.push(
           new Paragraph({
-            children: runs,
-            spacing: { after: 200 },
+            children: [new DocxMath({ children: mathContent })],
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 200, after: 200 },
           })
         );
+      } else {
+        const runs = processInlineContent(paragraphNode.children);
+        if (runs.length > 0) {
+          paragraphs.push(
+            new Paragraph({
+              children: runs,
+              spacing: { after: 200 },
+            })
+          );
+        }
       }
     } else if (node.type === "math") {
       // Block math - display equation
@@ -497,21 +662,120 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
     } else if (node.type === "list") {
       const listNode = node as ListNode;
       let itemNumber = 1;
-      for (const item of listNode.children) {
+      
+      for (let j = 0; j < listNode.children.length; j++) {
+        const item = listNode.children[j];
+        
         if (item.type === "listItem" && item.children) {
+          let isFirstChild = true;
+          const bullet = listNode.ordered ? `${itemNumber}. ` : "• ";
+          
+          // Process all children of this list item
           for (const child of item.children) {
             if (child.type === "paragraph") {
-              const runs = processInlineContent((child as ParagraphNode).children);
-              const bullet = listNode.ordered ? `${itemNumber}. ` : "• ";
+              const paraNode = child as ParagraphNode;
+              
+              // Check if this is a math-only paragraph
+              const isOnlyMath = paraNode.children.length === 1 && 
+                                 paraNode.children[0].type === "inlineMath";
+              
+              if (isOnlyMath) {
+                // Render as display math with indentation
+                const mathNode = paraNode.children[0] as MathNode;
+                const mathContent = parseLatexToDocxMath(mathNode.value);
+                paragraphs.push(
+                  new Paragraph({
+                    children: [new DocxMath({ children: mathContent })],
+                    alignment: AlignmentType.LEFT,
+                    spacing: { before: 100, after: 100 },
+                    indent: { left: 1440 },
+                  })
+                );
+                isFirstChild = false;
+              } else {
+                // Regular paragraph
+                const runs = processInlineContent(paraNode.children);
+                if (runs.length > 0 || isFirstChild) {
+                  // Include bullet only on first paragraph of the item
+                  const paragraphChildren = isFirstChild && runs.length > 0
+                    ? [new TextRun({ text: bullet }), ...runs]
+                    : isFirstChild
+                    ? [new TextRun({ text: bullet })]
+                    : runs;
+                    
+                  paragraphs.push(
+                    new Paragraph({
+                      children: paragraphChildren.length > 0 ? paragraphChildren : [new TextRun({ text: bullet })],
+                      spacing: { after: 100 },
+                      indent: { left: isFirstChild ? 720 : 1440 },
+                    })
+                  );
+                  isFirstChild = false;
+                }
+              }
+            } else if (child.type === "math") {
+              // Block math inside list item
+              const mathContent = parseLatexToDocxMath((child as MathNode).value);
               paragraphs.push(
                 new Paragraph({
-                  children: [new TextRun({ text: bullet }), ...runs],
-                  spacing: { after: 100 },
-                  indent: { left: 720 },
+                  children: [new DocxMath({ children: mathContent })],
+                  alignment: AlignmentType.LEFT,
+                  spacing: { before: 100, after: 100 },
+                  indent: { left: 1440 },
                 })
               );
+              isFirstChild = false;
+            } else if (child.type === "code" && "value" in child) {
+              // Code block inside list item - might be misinterpreted math
+              const codeValue = (child as { value: string }).value;
+              // Check if it looks like LaTeX (contains backslash or math symbols)
+              if (codeValue.includes("\\") || codeValue.match(/[\^_{}]/)) {
+                // Try to parse as LaTeX
+                const mathContent = parseLatexToDocxMath(codeValue);
+                paragraphs.push(
+                  new Paragraph({
+                    children: [new DocxMath({ children: mathContent })],
+                    alignment: AlignmentType.LEFT,
+                    spacing: { before: 100, after: 100 },
+                    indent: { left: 1440 },
+                  })
+                );
+              } else {
+                // Render as code
+                paragraphs.push(
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: codeValue,
+                        font: "Courier New",
+                        size: 20,
+                      }),
+                    ],
+                    spacing: { before: 100, after: 100 },
+                    indent: { left: 1440 },
+                  })
+                );
+              }
+              isFirstChild = false;
+            } else if (child.type === "list") {
+              // Nested list - process recursively
+              const nestedParagraphs = processNodes([child]);
+              paragraphs.push(...nestedParagraphs);
+              isFirstChild = false;
             }
           }
+          
+          // Ensure at least the bullet is printed even if item is empty
+          if (isFirstChild) {
+            paragraphs.push(
+              new Paragraph({
+                children: [new TextRun({ text: bullet })],
+                spacing: { after: 100 },
+                indent: { left: 720 },
+              })
+            );
+          }
+          
           itemNumber++;
         }
       }
@@ -557,11 +821,26 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
   return paragraphs;
 }
 
-export async function generateDocx(markdown: string): Promise<void> {
+import { preprocessChatGPTMarkdown } from "./utils/chatgpt-preprocessor";
+import type { AISource } from "./utils/types";
+
+export async function generateDocx(markdown: string, source: AISource = "gemini"): Promise<void> {
+  // Pre-process markdown based on source
+  let processedMarkdown = markdown;
+  
+  if (source === "chatgpt") {
+    // ChatGPT uses [...] for math, convert to $$...$$
+    processedMarkdown = preprocessChatGPTMarkdown(processedMarkdown);
+  }
+  
+  // Ensure blank lines around display math for proper parsing
+  processedMarkdown = processedMarkdown.replace(/([^\n])\n(\$\$)/g, '$1\n\n$2');
+  processedMarkdown = processedMarkdown.replace(/(\$\$)\n([^\n])/g, '$1\n\n$2');
+  
   // Parse markdown with math support
   const processor = unified().use(remarkParse).use(remarkMath);
 
-  const tree = processor.parse(markdown) as Root;
+  const tree = processor.parse(processedMarkdown) as Root;
 
   // Process the AST
   const paragraphs = processNodes(tree.children as ContentNode[]);

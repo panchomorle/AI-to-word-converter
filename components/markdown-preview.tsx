@@ -7,28 +7,47 @@ import remarkMath from "remark-math";
 import remarkRehype from "remark-rehype";
 import rehypeKatex from "rehype-katex";
 import rehypeStringify from "rehype-stringify";
+import { postProcessGeminiHtml } from "@/lib/utils/gemini-postprocessor";
+import { preprocessChatGPTForPreview } from "@/lib/utils/chatgpt-preprocessor";
+import type { AISource } from "@/lib/utils/types";
 
 interface MarkdownPreviewProps {
   markdown: string;
+  source?: AISource;
 }
 
-export default function MarkdownPreview({ markdown }: MarkdownPreviewProps) {
+export default function MarkdownPreview({ markdown, source = "gemini" }: MarkdownPreviewProps) {
   const html = useMemo(() => {
     try {
+      // Pre-process based on source
+      let processedMarkdown = markdown;
+      if (source === "chatgpt") {
+        processedMarkdown = preprocessChatGPTForPreview(markdown);
+      }
+      
+      // Process markdown - remark-math will handle $$ naturally
       const result = unified()
         .use(remarkParse)
         .use(remarkMath)
         .use(remarkRehype)
         .use(rehypeKatex)
         .use(rehypeStringify)
-        .processSync(markdown);
+        .processSync(processedMarkdown);
       
-      return String(result);
+      let htmlOutput = String(result);
+      
+      // Post-process based on source
+      if (source === "gemini") {
+        htmlOutput = postProcessGeminiHtml(htmlOutput);
+      }
+      // ChatGPT doesn't need HTML post-processing after the markdown pre-processing
+      
+      return htmlOutput;
     } catch (error) {
       console.error("Error parsing markdown:", error);
       return "<p>Error al procesar el Markdown</p>";
     }
-  }, [markdown]);
+  }, [markdown, source]);
 
   return (
     <>
@@ -107,6 +126,31 @@ export default function MarkdownPreview({ markdown }: MarkdownPreviewProps) {
         .markdown-preview li {
           margin-bottom: 0.5rem;
           line-height: 1.6;
+        }
+        .markdown-preview li > p {
+          margin-bottom: 0.5rem;
+        }
+        .markdown-preview li .katex-display {
+          margin: 0.75rem 0;
+          margin-left: 0;
+        }
+        .markdown-preview ol > li {
+          display: list-item;
+          list-style-type: decimal;
+        }
+        .markdown-preview ol {
+          counter-reset: item;
+        }
+        /* Handle math blocks that appear between list items */
+        .markdown-preview ol + p > .katex-display,
+        .markdown-preview ol + p:has(.katex-display) {
+          margin-left: 1.5rem;
+          margin-top: -0.5rem;
+          margin-bottom: 0.5rem;
+        }
+        /* Ensure list numbering continues */
+        .markdown-preview ol + ol {
+          counter-reset: item var(--start, 1);
         }
         .markdown-preview blockquote {
           border-left: 3px solid var(--primary);

@@ -3,7 +3,7 @@
 import React from "react"
 
 import { useState, useCallback, useEffect } from "react";
-import { FileDown, Sparkles, Settings2, FileText, Eye } from "lucide-react";
+import { FileDown, Sparkles, Settings2, FileText, Eye, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import MarkdownPreview from "@/components/markdown-preview";
 import { generateDocx } from "@/lib/docx-generator";
 import Confetti from "@/components/confetti";
+import InfoModal from "@/components/info-modal";
+import type { AISource } from "@/lib/utils/types";
 
 const sampleMarkdown = `# Ejemplo de Documento Técnico
 
@@ -46,6 +48,8 @@ export default function MarkdownToWordConverter() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [cleanedMarkdown, setCleanedMarkdown] = useState(sampleMarkdown);
+  const [aiSource, setAiSource] = useState<AISource>("gemini");
+  const [showInfoModal, setShowInfoModal] = useState(false);
 
   // Regex cleaning function for AI over-escaping
   const cleanAIMarkdown = useCallback((text: string): string => {
@@ -284,7 +288,7 @@ export default function MarkdownToWordConverter() {
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      await generateDocx(cleanedMarkdown);
+      await generateDocx(cleanedMarkdown, aiSource);
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3000);
     } catch (error) {
@@ -297,6 +301,7 @@ export default function MarkdownToWordConverter() {
   return (
     <div className="min-h-screen bg-background">
       {showConfetti && <Confetti />}
+      <InfoModal isOpen={showInfoModal} onClose={() => setShowInfoModal(false)} />
       
       {/* Header */}
       <header className="border-b border-border">
@@ -317,17 +322,15 @@ export default function MarkdownToWordConverter() {
             </div>
             
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50">
-                <Settings2 className="w-4 h-4 text-muted-foreground" />
-                <Label htmlFor="auto-clean" className="text-sm text-muted-foreground cursor-pointer">
-                  Limpieza IA
-                </Label>
-                <Switch
-                  id="auto-clean"
-                  checked={autoClean}
-                  onCheckedChange={setAutoClean}
-                />
-              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowInfoModal(true)}
+                className="h-9 w-9"
+                title="Cómo usar"
+              >
+                <Info className="h-4 w-4" />
+              </Button>
               
               <Button 
                 onClick={handleGenerate}
@@ -359,20 +362,25 @@ export default function MarkdownToWordConverter() {
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
               <FileText className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium text-foreground">Markdown Input</span>
-              <div className="ml-auto flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-primary" />
-                <span className="text-xs text-muted-foreground">
-                  Pega texto de ChatGPT, Gemini, Claude...
-                </span>
+              <div className="ml-auto flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground">Fuente:</Label>
+                <select
+                  value={aiSource}
+                  onChange={(e) => setAiSource(e.target.value as AISource)}
+                  className="bg-secondary text-sm text-foreground border border-border rounded px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="gemini" className="bg-secondary text-foreground">Gemini</option>
+                  <option value="chatgpt" className="bg-secondary text-foreground">ChatGPT</option>
+                </select>
               </div>
             </div>
-            <CardContent className="flex-1 p-0">
+            <CardContent className="flex-1 p-0 overflow-hidden">
               <Textarea
                 value={markdown}
                 onChange={(e) => setMarkdown(e.target.value)}
                 onPaste={handlePaste}
                 placeholder="Pega aquí tu Markdown con fórmulas LaTeX..."
-                className="h-full min-h-[500px] resize-none border-0 rounded-none font-mono text-sm bg-input/50 focus-visible:ring-0 focus-visible:ring-offset-0"
+                className="h-full w-full resize-none border-0 rounded-none font-mono text-sm bg-input/50 focus-visible:ring-0 focus-visible:ring-offset-0 overflow-y-auto [field-sizing:initial]"
               />
             </CardContent>
           </Card>
@@ -382,16 +390,20 @@ export default function MarkdownToWordConverter() {
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
               <Eye className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium text-foreground">Vista Previa</span>
-              {autoClean && (
-                <div className="ml-auto">
-                  <span className="text-xs text-primary bg-primary/10 px-2 py-1 rounded">
-                    Limpieza activa
-                  </span>
-                </div>
-              )}
+              <div className="ml-auto flex items-center gap-2">
+                <Settings2 className="w-4 h-4 text-muted-foreground" />
+                <Label htmlFor="auto-clean" className="text-xs text-muted-foreground cursor-pointer">
+                  Limpieza IA
+                </Label>
+                <Switch
+                  id="auto-clean"
+                  checked={autoClean}
+                  onCheckedChange={setAutoClean}
+                />
+              </div>
             </div>
             <CardContent className="flex-1 p-4 overflow-auto bg-card">
-              <MarkdownPreview markdown={cleanedMarkdown} />
+              <MarkdownPreview markdown={cleanedMarkdown} source={aiSource} />
             </CardContent>
           </Card>
         </div>
