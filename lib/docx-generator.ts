@@ -12,12 +12,18 @@ import {
   MathSubScript,
   MathSubSuperScript,
   AlignmentType,
+  Table,
+  TableRow,
+  TableCell,
+  WidthType,
+  BorderStyle,
 } from "docx";
 import fileSaver from "file-saver";
 const { saveAs } = fileSaver;
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
 import type { Root, RootContent, PhrasingContent } from "mdast";
 
 interface MathNode {
@@ -50,7 +56,23 @@ interface ListNode {
   }>;
 }
 
-type ContentNode = HeadingNode | ParagraphNode | MathNode | ListNode | RootContent;
+interface TableCellNode {
+  type: "tableCell";
+  children: Array<TextNode | MathNode | PhrasingContent>;
+}
+
+interface TableRowNode {
+  type: "tableRow";
+  children: TableCellNode[];
+}
+
+interface TableNode {
+  type: "table";
+  align?: Array<"left" | "center" | "right" | null>;
+  children: TableRowNode[];
+}
+
+type ContentNode = HeadingNode | ParagraphNode | MathNode | ListNode | TableNode | RootContent;
 
 type MathElement = MathRun | MathFraction | MathRadical | MathSuperScript | MathSubScript | MathSubSuperScript;
 
@@ -225,7 +247,7 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
     }
 
     // Handle standalone superscript without explicit base: ^{content} or ^char
-    // This occurs when the base was already parsed (e.g., "3" is already a MathRun)
+    // This occurs when the base was already parsed (e.g., "m" is already a MathRun, then "^2" follows)
     const standaloneSuperMatch = remaining.match(/^\^\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
     if (standaloneSuperMatch && elements.length > 0) {
       const lastElement = elements.pop()!;
@@ -236,6 +258,20 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
         })
       );
       remaining = remaining.slice(standaloneSuperMatch[0].length);
+      continue;
+    }
+    
+    // Handle standalone superscript without braces: ^2, ^n, etc.
+    const standaloneSuperNoBraceMatch = remaining.match(/^\^([a-zA-Z0-9])/);
+    if (standaloneSuperNoBraceMatch && elements.length > 0) {
+      const lastElement = elements.pop()!;
+      elements.push(
+        new MathSuperScript({
+          children: [lastElement],
+          superScript: [new MathRun(standaloneSuperNoBraceMatch[1])],
+        })
+      );
+      remaining = remaining.slice(standaloneSuperNoBraceMatch[0].length);
       continue;
     }
 
@@ -253,7 +289,7 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       continue;
     }
 
-    // Handle standalone subscript without explicit base: _{content} or _char
+    // Handle standalone subscript without explicit base: _{content}
     const standaloneSubMatch = remaining.match(/^_\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
     if (standaloneSubMatch && elements.length > 0) {
       const lastElement = elements.pop()!;
@@ -264,6 +300,20 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
         })
       );
       remaining = remaining.slice(standaloneSubMatch[0].length);
+      continue;
+    }
+
+    // Handle standalone subscript without braces: _2, _n, etc.
+    const standaloneSubNoBraceMatch = remaining.match(/^_([a-zA-Z0-9])/);
+    if (standaloneSubNoBraceMatch && elements.length > 0) {
+      const lastElement = elements.pop()!;
+      elements.push(
+        new MathSubScript({
+          children: [lastElement],
+          subScript: [new MathRun(standaloneSubNoBraceMatch[1])],
+        })
+      );
+      remaining = remaining.slice(standaloneSubNoBraceMatch[0].length);
       continue;
     }
 
@@ -396,14 +446,64 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       continue;
     }
 
+    // Handle \mathbf{content} - bold math (just render content without special formatting in OMML)
+    const mathbfMatch = remaining.match(/^\\mathbf\{([^{}]*)\}/);
+    if (mathbfMatch) {
+      // Parse the content inside \mathbf{} recursively
+      const innerContent = parseLatexToDocxMath(mathbfMatch[1]);
+      elements.push(...innerContent);
+      remaining = remaining.slice(mathbfMatch[0].length);
+      continue;
+    }
+
+    // Handle \mathrm{content} - roman/upright math
+    const mathrmMatch = remaining.match(/^\\mathrm\{([^{}]*)\}/);
+    if (mathrmMatch) {
+      elements.push(new MathRun(mathrmMatch[1]));
+      remaining = remaining.slice(mathrmMatch[0].length);
+      continue;
+    }
+
+    // Handle \mathit{content} - italic math
+    const mathitMatch = remaining.match(/^\\mathit\{([^{}]*)\}/);
+    if (mathitMatch) {
+      elements.push(new MathRun(mathitMatch[1]));
+      remaining = remaining.slice(mathitMatch[0].length);
+      continue;
+    }
+
     // Handle regular characters and operators
+    // But stop before a character that's followed by ^ or _ (superscript/subscript)
     const charMatch = remaining.match(/^[a-zA-Z0-9+\-=()[\]{}<>|,.:;!?'"\/\s]/);
     if (charMatch) {
-      // Collect consecutive characters
-      const textMatchResult = remaining.match(/^[a-zA-Z0-9+\-=()[\]{}<>|,.:;!?'"\/\s]+/);
-      if (textMatchResult) {
-        elements.push(new MathRun(textMatchResult[0]));
-        remaining = remaining.slice(textMatchResult[0].length);
+      // Collect consecutive characters, but be careful about chars before ^ or _
+      // We need to stop before any char that's followed by ^ or _
+      let textToConsume = "";
+      let lookAhead = remaining;
+      
+      while (lookAhead.length > 0) {
+        const nextChar = lookAhead[0];
+        const afterNext = lookAhead[1];
+        
+        // If this char is followed by ^ or _, only consume it if it's a space or operator
+        // Otherwise, leave it for the superscript/subscript handler
+        if ((afterNext === '^' || afterNext === '_') && /[a-zA-Z0-9\)\]]/.test(nextChar)) {
+          // This char should be the base of a superscript/subscript
+          break;
+        }
+        
+        // Check if this is a valid regular character
+        if (/^[a-zA-Z0-9+\-=()[\]{}<>|,.:;!?'"\/\s]/.test(nextChar)) {
+          textToConsume += nextChar;
+          lookAhead = lookAhead.slice(1);
+        } else {
+          break;
+        }
+      }
+      
+      if (textToConsume.length > 0) {
+        elements.push(new MathRun(textToConsume));
+        remaining = remaining.slice(textToConsume.length);
         continue;
       }
     }
@@ -429,13 +529,14 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
 
 // Convert inline content (text and inline math) to TextRuns and Math
 function processInlineContent(
-  children: Array<TextNode | MathNode | PhrasingContent>
+  children: Array<TextNode | MathNode | PhrasingContent>,
+  forceBold: boolean = false
 ): (TextRun | DocxMath)[] {
   const runs: (TextRun | DocxMath)[] = [];
 
   for (const child of children) {
     if (child.type === "text") {
-      runs.push(new TextRun({ text: (child as TextNode).value }));
+      runs.push(new TextRun({ text: (child as TextNode).value, bold: forceBold || undefined }));
     } else if (child.type === "inlineMath") {
       const mathContent = parseLatexToDocxMath((child as MathNode).value);
       runs.push(new DocxMath({ children: mathContent }));
@@ -450,14 +551,8 @@ function processInlineContent(
           runs.push(new DocxMath({ children: mathContent }));
         } else {
           // Recursively process other nested content
-          const nestedRuns = processInlineContent([subChild]);
-          for (const run of nestedRuns) {
-            if (run instanceof TextRun) {
-              runs.push(new TextRun({ text: (run as any).options?.text || "", bold: true }));
-            } else {
-              runs.push(run);
-            }
-          }
+          const nestedRuns = processInlineContent([subChild], true);
+          runs.push(...nestedRuns);
         }
       }
     } else if (child.type === "emphasis" && "children" in child) {
@@ -465,29 +560,24 @@ function processInlineContent(
       const emChild = child as { children: Array<TextNode | MathNode | PhrasingContent> };
       for (const subChild of emChild.children) {
         if (subChild.type === "text") {
-          runs.push(new TextRun({ text: (subChild as TextNode).value, italics: true }));
+          runs.push(new TextRun({ text: (subChild as TextNode).value, italics: true, bold: forceBold || undefined }));
         } else if (subChild.type === "inlineMath") {
           const mathContent = parseLatexToDocxMath((subChild as MathNode).value);
           runs.push(new DocxMath({ children: mathContent }));
         } else {
           // Recursively process other nested content
-          const nestedRuns = processInlineContent([subChild]);
-          for (const run of nestedRuns) {
-            if (run instanceof TextRun) {
-              runs.push(new TextRun({ text: (run as any).options?.text || "", italics: true }));
-            } else {
-              runs.push(run);
-            }
-          }
+          const nestedRuns = processInlineContent([subChild], forceBold);
+          runs.push(...nestedRuns);
         }
       }
     } else if (child.type === "link" && "children" in child) {
       const linkChildren = processInlineContent(
-        (child as { children: Array<TextNode | MathNode | PhrasingContent> }).children
+        (child as { children: Array<TextNode | MathNode | PhrasingContent> }).children,
+        forceBold
       );
       runs.push(...linkChildren);
     } else if ("value" in child && typeof child.value === "string") {
-      runs.push(new TextRun({ text: child.value }));
+      runs.push(new TextRun({ text: child.value, bold: forceBold || undefined }));
     }
   }
 
@@ -507,9 +597,9 @@ function getHeadingLevel(depth: number): (typeof HeadingLevel)[keyof typeof Head
   return levels[depth] || HeadingLevel.HEADING_1;
 }
 
-// Process AST nodes to paragraphs
-function processNodes(nodes: ContentNode[]): Paragraph[] {
-  const paragraphs: Paragraph[] = [];
+// Process AST nodes to elements and tables
+function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
+  const elements: (Paragraph | Table)[] = [];
   
   // Pre-process to merge list items that are split across multiple list nodes
   const mergedNodes: ContentNode[] = [];
@@ -524,7 +614,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
       
       // If this is the same type of list, accumulate items
       if (currentListOrdered === listNode.ordered) {
-        // Check if there are math paragraphs before this list continuation
+        // Check if there are math elements before this list continuation
         // and associate them with the last item
         while (mergedNodes.length > 0 && mergedNodes[mergedNodes.length - 1].type === "paragraph") {
           const lastNode = mergedNodes[mergedNodes.length - 1] as ParagraphNode;
@@ -612,7 +702,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
     if (node.type === "heading") {
       const headingNode = node as HeadingNode;
       const runs = processInlineContent(headingNode.children);
-      paragraphs.push(
+      elements.push(
         new Paragraph({
           children: runs,
           heading: getHeadingLevel(headingNode.depth),
@@ -630,7 +720,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
         // Treat inline math in its own paragraph as display math
         const mathNode = paragraphNode.children[0] as MathNode;
         const mathContent = parseLatexToDocxMath(mathNode.value);
-        paragraphs.push(
+        elements.push(
           new Paragraph({
             children: [new DocxMath({ children: mathContent })],
             alignment: AlignmentType.CENTER,
@@ -640,7 +730,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
       } else {
         const runs = processInlineContent(paragraphNode.children);
         if (runs.length > 0) {
-          paragraphs.push(
+          elements.push(
             new Paragraph({
               children: runs,
               spacing: { after: 200 },
@@ -652,7 +742,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
       // Block math - display equation
       const mathNode = node as MathNode;
       const mathContent = parseLatexToDocxMath(mathNode.value);
-      paragraphs.push(
+      elements.push(
         new Paragraph({
           children: [new DocxMath({ children: mathContent })],
           alignment: AlignmentType.CENTER,
@@ -683,7 +773,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
                 // Render as display math with indentation
                 const mathNode = paraNode.children[0] as MathNode;
                 const mathContent = parseLatexToDocxMath(mathNode.value);
-                paragraphs.push(
+                elements.push(
                   new Paragraph({
                     children: [new DocxMath({ children: mathContent })],
                     alignment: AlignmentType.LEFT,
@@ -703,7 +793,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
                     ? [new TextRun({ text: bullet })]
                     : runs;
                     
-                  paragraphs.push(
+                  elements.push(
                     new Paragraph({
                       children: paragraphChildren.length > 0 ? paragraphChildren : [new TextRun({ text: bullet })],
                       spacing: { after: 100 },
@@ -716,7 +806,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
             } else if (child.type === "math") {
               // Block math inside list item
               const mathContent = parseLatexToDocxMath((child as MathNode).value);
-              paragraphs.push(
+              elements.push(
                 new Paragraph({
                   children: [new DocxMath({ children: mathContent })],
                   alignment: AlignmentType.LEFT,
@@ -732,7 +822,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
               if (codeValue.includes("\\") || codeValue.match(/[\^_{}]/)) {
                 // Try to parse as LaTeX
                 const mathContent = parseLatexToDocxMath(codeValue);
-                paragraphs.push(
+                elements.push(
                   new Paragraph({
                     children: [new DocxMath({ children: mathContent })],
                     alignment: AlignmentType.LEFT,
@@ -742,7 +832,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
                 );
               } else {
                 // Render as code
-                paragraphs.push(
+                elements.push(
                   new Paragraph({
                     children: [
                       new TextRun({
@@ -760,14 +850,14 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
             } else if (child.type === "list") {
               // Nested list - process recursively
               const nestedParagraphs = processNodes([child]);
-              paragraphs.push(...nestedParagraphs);
+              elements.push(...nestedParagraphs);
               isFirstChild = false;
             }
           }
           
           // Ensure at least the bullet is printed even if item is empty
           if (isFirstChild) {
-            paragraphs.push(
+            elements.push(
               new Paragraph({
                 children: [new TextRun({ text: bullet })],
                 spacing: { after: 100 },
@@ -784,7 +874,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
         (node as { children: ContentNode[] }).children
       );
       for (const p of quoteChildren) {
-        paragraphs.push(
+        elements.push(
           new Paragraph({
             children: (p as unknown as { options: { children: (TextRun | DocxMath)[] } }).options?.children || [],
             indent: { left: 720 },
@@ -793,7 +883,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
         );
       }
     } else if (node.type === "thematicBreak") {
-      paragraphs.push(
+      elements.push(
         new Paragraph({
           children: [],
           border: {
@@ -803,7 +893,7 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
         })
       );
     } else if (node.type === "code" && "value" in node) {
-      paragraphs.push(
+      elements.push(
         new Paragraph({
           children: [
             new TextRun({
@@ -815,35 +905,97 @@ function processNodes(nodes: ContentNode[]): Paragraph[] {
           spacing: { before: 200, after: 200 },
         })
       );
+    } else if (node.type === "table") {
+      // Process table
+      const tableNode = node as TableNode;
+      const rows: TableRow[] = [];
+      
+      for (let rowIndex = 0; rowIndex < tableNode.children.length; rowIndex++) {
+        const row = tableNode.children[rowIndex];
+        const cells: TableCell[] = [];
+        const isHeader = rowIndex === 0;
+        
+        for (let cellIndex = 0; cellIndex < row.children.length; cellIndex++) {
+          const cell = row.children[cellIndex];
+          
+          // Get alignment for this column
+          const align = tableNode.align?.[cellIndex] || "left";
+          let alignment: typeof AlignmentType[keyof typeof AlignmentType] = AlignmentType.LEFT;
+          if (align === "center") alignment = AlignmentType.CENTER;
+          else if (align === "right") alignment = AlignmentType.RIGHT;
+          
+          // Process cell content - for headers, we pass isBold=true
+          const cellContent = isHeader 
+            ? processInlineContent(cell.children, true) // Pass bold flag for headers
+            : processInlineContent(cell.children);
+          
+          cells.push(
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: cellContent,
+                  alignment: alignment,
+                }),
+              ],
+              width: { size: 100 / row.children.length, type: WidthType.PERCENTAGE },
+            })
+          );
+        }
+        
+        rows.push(new TableRow({ children: cells }));
+      }
+      
+      elements.push(
+        new Table({
+          rows: rows,
+          width: { size: 100, type: WidthType.PERCENTAGE },
+        })
+      );
+      
+      // Add spacing after table
+      elements.push(
+        new Paragraph({
+          children: [],
+          spacing: { after: 200 },
+        })
+      );
     }
   }
 
-  return paragraphs;
+  return elements;
 }
 
 import { preprocessChatGPTMarkdown } from "./utils/chatgpt-preprocessor";
+import { preprocessGeminiMarkdown } from "./utils/gemini-postprocessor";
 import type { AISource } from "./utils/types";
 
-export async function generateDocx(markdown: string, source: AISource = "gemini"): Promise<void> {
+export async function generateDocx(
+  markdown: string, 
+  source: AISource = "gemini",
+  parseCsvTables: boolean = false
+): Promise<void> {
   // Pre-process markdown based on source
   let processedMarkdown = markdown;
   
   if (source === "chatgpt") {
     // ChatGPT uses [...] for math, convert to $$...$$
     processedMarkdown = preprocessChatGPTMarkdown(processedMarkdown);
+  } else if (source === "gemini") {
+    // Gemini adds blank lines in tables that break parsing
+    processedMarkdown = preprocessGeminiMarkdown(processedMarkdown, parseCsvTables);
   }
   
   // Ensure blank lines around display math for proper parsing
   processedMarkdown = processedMarkdown.replace(/([^\n])\n(\$\$)/g, '$1\n\n$2');
   processedMarkdown = processedMarkdown.replace(/(\$\$)\n([^\n])/g, '$1\n\n$2');
   
-  // Parse markdown with math support
-  const processor = unified().use(remarkParse).use(remarkMath);
+  // Parse markdown with math and GFM (tables) support
+  const processor = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 
   const tree = processor.parse(processedMarkdown) as Root;
 
   // Process the AST
-  const paragraphs = processNodes(tree.children as ContentNode[]);
+  const children = processNodes(tree.children as ContentNode[]);
 
   // Create the document
   const doc = new Document({
@@ -859,7 +1011,7 @@ export async function generateDocx(markdown: string, source: AISource = "gemini"
             },
           },
         },
-        children: paragraphs,
+        children: children,
       },
     ],
     styles: {

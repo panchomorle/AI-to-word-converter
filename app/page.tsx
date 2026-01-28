@@ -45,6 +45,7 @@ $$\\frac{\\partial f}{\\partial x} = \\lim_{h \\to 0} \\frac{f(x+h, y) - f(x, y)
 export default function MarkdownToWordConverter() {
   const [markdown, setMarkdown] = useState(sampleMarkdown);
   const [autoClean, setAutoClean] = useState(true);
+  const [parseCsvTables, setParseCsvTables] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [cleanedMarkdown, setCleanedMarkdown] = useState(sampleMarkdown);
@@ -208,6 +209,84 @@ export default function MarkdownToWordConverter() {
                 const lines = convertToMarkdown(el).trim().split("\n");
                 result += "\n" + lines.map(line => `> ${line}`).join("\n") + "\n\n";
                 break;
+              case "table":
+                // Convert HTML table to Markdown table
+                const rows: string[][] = [];
+                const headerRow: string[] = [];
+                let hasHeader = false;
+                
+                // Process thead and tbody
+                for (const child of Array.from(el.children)) {
+                  const childTag = (child as Element).tagName.toLowerCase();
+                  if (childTag === "thead") {
+                    hasHeader = true;
+                    for (const tr of Array.from((child as Element).querySelectorAll("tr"))) {
+                      const cells: string[] = [];
+                      for (const cell of Array.from(tr.children)) {
+                        cells.push(convertToMarkdown(cell as Element).trim().replace(/\|/g, "\\|"));
+                      }
+                      if (headerRow.length === 0) {
+                        headerRow.push(...cells);
+                      }
+                    }
+                  } else if (childTag === "tbody") {
+                    for (const tr of Array.from((child as Element).querySelectorAll("tr"))) {
+                      const cells: string[] = [];
+                      for (const cell of Array.from(tr.children)) {
+                        cells.push(convertToMarkdown(cell as Element).trim().replace(/\|/g, "\\|"));
+                      }
+                      rows.push(cells);
+                    }
+                  } else if (childTag === "tr") {
+                    // Direct tr children (no thead/tbody)
+                    const cells: string[] = [];
+                    for (const cell of Array.from((child as Element).children)) {
+                      const cellTag = (cell as Element).tagName.toLowerCase();
+                      const cellContent = convertToMarkdown(cell as Element).trim().replace(/\|/g, "\\|");
+                      if (cellTag === "th" && !hasHeader) {
+                        headerRow.push(cellContent);
+                      } else {
+                        cells.push(cellContent);
+                      }
+                    }
+                    if (cells.length > 0) {
+                      rows.push(cells);
+                    }
+                    if (headerRow.length > 0 && !hasHeader) {
+                      hasHeader = true;
+                    }
+                  }
+                }
+                
+                // Build Markdown table
+                if (headerRow.length > 0 || rows.length > 0) {
+                  result += "\n";
+                  
+                  // If no header, use first row as header
+                  const actualHeader = headerRow.length > 0 ? headerRow : (rows.shift() || []);
+                  const numCols = actualHeader.length;
+                  
+                  // Header row
+                  result += `| ${actualHeader.join(" | ")} |\n`;
+                  // Separator row
+                  result += `| ${actualHeader.map(() => "---").join(" | ")} |\n`;
+                  // Data rows
+                  for (const row of rows) {
+                    // Pad row to have correct number of columns
+                    while (row.length < numCols) row.push("");
+                    result += `| ${row.join(" | ")} |\n`;
+                  }
+                  result += "\n";
+                }
+                break;
+              case "tr":
+              case "td":
+              case "th":
+              case "thead":
+              case "tbody":
+                // These are handled by the table case above
+                result += convertToMarkdown(el);
+                break;
               case "div":
               case "span":
                 // Check for math/katex classes
@@ -288,7 +367,7 @@ export default function MarkdownToWordConverter() {
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      await generateDocx(cleanedMarkdown, aiSource);
+      await generateDocx(cleanedMarkdown, aiSource, parseCsvTables);
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3000);
     } catch (error) {
@@ -362,16 +441,30 @@ export default function MarkdownToWordConverter() {
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
               <FileText className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium text-foreground">Markdown Input</span>
-              <div className="ml-auto flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground">Fuente:</Label>
-                <select
-                  value={aiSource}
-                  onChange={(e) => setAiSource(e.target.value as AISource)}
-                  className="bg-secondary text-sm text-foreground border border-border rounded px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  <option value="gemini" className="bg-secondary text-foreground">Gemini</option>
-                  <option value="chatgpt" className="bg-secondary text-foreground">ChatGPT</option>
-                </select>
+              <div className="ml-auto flex items-center gap-4">
+                {aiSource === "gemini" && (
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="parse-csv" className="text-xs text-muted-foreground cursor-pointer" title="Detectar tablas en formato CSV (separadas por comas)">
+                      Tablas CSV
+                    </Label>
+                    <Switch
+                      id="parse-csv"
+                      checked={parseCsvTables}
+                      onCheckedChange={setParseCsvTables}
+                    />
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Fuente:</Label>
+                  <select
+                    value={aiSource}
+                    onChange={(e) => setAiSource(e.target.value as AISource)}
+                    className="bg-secondary text-sm text-foreground border border-border rounded px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="gemini" className="bg-secondary text-foreground">Gemini</option>
+                    <option value="chatgpt" className="bg-secondary text-foreground">ChatGPT</option>
+                  </select>
+                </div>
               </div>
             </div>
             <CardContent className="flex-1 p-0 overflow-hidden">
@@ -403,7 +496,7 @@ export default function MarkdownToWordConverter() {
               </div>
             </div>
             <CardContent className="flex-1 p-4 overflow-auto bg-card">
-              <MarkdownPreview markdown={cleanedMarkdown} source={aiSource} />
+              <MarkdownPreview markdown={cleanedMarkdown} source={aiSource} parseCsvTables={parseCsvTables} />
             </CardContent>
           </Card>
         </div>

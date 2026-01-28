@@ -4,30 +4,36 @@ import { useMemo } from "react";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import rehypeKatex from "rehype-katex";
 import rehypeStringify from "rehype-stringify";
-import { postProcessGeminiHtml } from "@/lib/utils/gemini-postprocessor";
+import { postProcessGeminiHtml, preprocessGeminiMarkdown } from "@/lib/utils/gemini-postprocessor";
 import { preprocessChatGPTForPreview } from "@/lib/utils/chatgpt-preprocessor";
 import type { AISource } from "@/lib/utils/types";
 
 interface MarkdownPreviewProps {
   markdown: string;
   source?: AISource;
+  parseCsvTables?: boolean;
 }
 
-export default function MarkdownPreview({ markdown, source = "gemini" }: MarkdownPreviewProps) {
+export default function MarkdownPreview({ markdown, source = "gemini", parseCsvTables = false }: MarkdownPreviewProps) {
   const html = useMemo(() => {
     try {
       // Pre-process based on source
       let processedMarkdown = markdown;
       if (source === "chatgpt") {
         processedMarkdown = preprocessChatGPTForPreview(markdown);
+      } else if (source === "gemini") {
+        // Gemini tables have extra newlines that break GFM parsing
+        processedMarkdown = preprocessGeminiMarkdown(markdown, parseCsvTables);
       }
       
       // Process markdown - remark-math will handle $$ naturally
       const result = unified()
         .use(remarkParse)
+        .use(remarkGfm)  // GFM for tables
         .use(remarkMath)
         .use(remarkRehype)
         .use(rehypeKatex)
@@ -47,7 +53,7 @@ export default function MarkdownPreview({ markdown, source = "gemini" }: Markdow
       console.error("Error parsing markdown:", error);
       return "<p>Error al procesar el Markdown</p>";
     }
-  }, [markdown, source]);
+  }, [markdown, source, parseCsvTables]);
 
   return (
     <>
@@ -137,6 +143,10 @@ export default function MarkdownPreview({ markdown, source = "gemini" }: Markdow
         .markdown-preview ol > li {
           display: list-item;
           list-style-type: decimal;
+        }
+        .markdown-preview ul > li {
+          display: list-item;
+          list-style-type: disc;
         }
         .markdown-preview ol {
           counter-reset: item;
