@@ -70,6 +70,21 @@ function CardContent({ className, ...props }: React.ComponentProps<'div'>) {
     />
   )
 }
+CardContent.displayName = "CardContent"
+
+const CardContentWithRef = React.forwardRef<HTMLDivElement, React.ComponentProps<'div'>>(
+  ({ className, ...props }, ref) => {
+    return (
+      <div
+        ref={ref}
+        data-slot="card-content"
+        className={cn('px-6', className)}
+        {...props}
+      />
+    )
+  }
+)
+CardContentWithRef.displayName = "CardContentWithRef"
 
 function CardFooter({ className, ...props }: React.ComponentProps<'div'>) {
   return (
@@ -89,4 +104,5 @@ export {
   CardAction,
   CardDescription,
   CardContent,
+  CardContentWithRef,
 }

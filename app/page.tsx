@@ -5,7 +5,7 @@ import React from "react"
 import { useState, useCallback, useEffect } from "react";
 import { FileDown, Sparkles, Settings2, FileText, Eye, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardContentWithRef } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -51,6 +51,13 @@ export default function MarkdownToWordConverter() {
   const [cleanedMarkdown, setCleanedMarkdown] = useState(sampleMarkdown);
   const [aiSource, setAiSource] = useState<AISource>("gemini");
   const [showInfoModal, setShowInfoModal] = useState(false);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(50); // percentage
+  const [isDragging, setIsDragging] = useState(false);
+  
+  // Refs for scroll synchronization
+  const inputRef = React.useRef<HTMLTextAreaElement>(null);
+  const previewRef = React.useRef<HTMLDivElement>(null);
+  const syncingFromRef = React.useRef<'input' | 'preview' | null>(null);
 
   // Regex cleaning function for AI over-escaping
   const cleanAIMarkdown = useCallback((text: string): string => {
@@ -377,13 +384,86 @@ export default function MarkdownToWordConverter() {
     }
   };
 
+  const handleMouseDown = () => {
+    setIsDragging(true);
+  };
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+    
+    const container = document.getElementById('panels-container');
+    if (!container) return;
+    
+    const containerRect = container.getBoundingClientRect();
+    const newWidth = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+    
+    // Limit between 20% and 80%
+    if (newWidth >= 20 && newWidth <= 80) {
+      setLeftPanelWidth(newWidth);
+    }
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp]);
+
+  // Scroll synchronization - bidirectional with simple flag
+  const handleInputScroll = useCallback(() => {
+    if (!inputRef.current || !previewRef.current) return;
+    if (syncingFromRef.current === 'preview') return;
+    
+    syncingFromRef.current = 'input';
+    
+    const inputElement = inputRef.current;
+    const previewElement = previewRef.current;
+    
+    const scrollRatio = inputElement.scrollTop / (inputElement.scrollHeight - inputElement.clientHeight || 1);
+    const targetScroll = scrollRatio * (previewElement.scrollHeight - previewElement.clientHeight);
+    
+    previewElement.scrollTop = targetScroll;
+    
+    setTimeout(() => {
+      syncingFromRef.current = null;
+    }, 0);
+  }, []);
+
+  const handlePreviewScroll = useCallback(() => {
+    if (!inputRef.current || !previewRef.current) return;
+    if (syncingFromRef.current === 'input') return;
+    
+    syncingFromRef.current = 'preview';
+    
+    const previewElement = previewRef.current;
+    const inputElement = inputRef.current;
+    
+    const scrollRatio = previewElement.scrollTop / (previewElement.scrollHeight - previewElement.clientHeight || 1);
+    const targetScroll = scrollRatio * (inputElement.scrollHeight - inputElement.clientHeight);
+    
+    inputElement.scrollTop = targetScroll;
+    
+    setTimeout(() => {
+      syncingFromRef.current = null;
+    }, 0);
+  }, []);
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       {showConfetti && <Confetti />}
       <InfoModal isOpen={showInfoModal} onClose={() => setShowInfoModal(false)} />
       
       {/* Header */}
-      <header className="border-b border-border">
+      <header className="border-b border-border shrink-0">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -434,71 +514,98 @@ export default function MarkdownToWordConverter() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-140px)]">
+      <main className="container mx-auto px-4 py-3 flex-1 overflow-hidden">
+        <div id="panels-container" className="flex gap-0 h-full relative">
           {/* Input Panel */}
-          <Card className="flex flex-col overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
-              <FileText className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium text-foreground">Markdown Input</span>
-              <div className="ml-auto flex items-center gap-4">
-                {aiSource === "gemini" && (
+          <div style={{ width: `${leftPanelWidth}%` }} className="shrink-0 pr-2">
+            <Card className="flex flex-col gap-0 py-0 overflow-hidden h-full">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
+                <FileText className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-foreground">Markdown Input</span>
+                <div className="ml-auto flex items-center gap-4">
+                  {aiSource === "gemini" && (
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="parse-csv" className="text-xs text-muted-foreground cursor-pointer" title="Detectar tablas en formato CSV (separadas por comas)">
+                        Tablas CSV
+                      </Label>
+                      <Switch
+                        id="parse-csv"
+                        checked={parseCsvTables}
+                        onCheckedChange={setParseCsvTables}
+                      />
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
-                    <Label htmlFor="parse-csv" className="text-xs text-muted-foreground cursor-pointer" title="Detectar tablas en formato CSV (separadas por comas)">
-                      Tablas CSV
-                    </Label>
-                    <Switch
-                      id="parse-csv"
-                      checked={parseCsvTables}
-                      onCheckedChange={setParseCsvTables}
-                    />
+                    <Label className="text-xs text-muted-foreground">Fuente:</Label>
+                    <select
+                      value={aiSource}
+                      onChange={(e) => setAiSource(e.target.value as AISource)}
+                      className="bg-secondary text-sm text-foreground border border-border rounded px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      <option value="gemini" className="bg-secondary text-foreground">Gemini</option>
+                      <option value="chatgpt" className="bg-secondary text-foreground">ChatGPT</option>
+                    </select>
                   </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground">Fuente:</Label>
-                  <select
-                    value={aiSource}
-                    onChange={(e) => setAiSource(e.target.value as AISource)}
-                    className="bg-secondary text-sm text-foreground border border-border rounded px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
-                  >
-                    <option value="gemini" className="bg-secondary text-foreground">Gemini</option>
-                    <option value="chatgpt" className="bg-secondary text-foreground">ChatGPT</option>
-                  </select>
                 </div>
               </div>
-            </div>
-            <CardContent className="flex-1 p-0 overflow-hidden">
-              <Textarea
-                value={markdown}
-                onChange={(e) => setMarkdown(e.target.value)}
-                onPaste={handlePaste}
-                placeholder="Pega aquí tu Markdown con fórmulas LaTeX..."
-                className="h-full w-full resize-none border-0 rounded-none font-mono text-sm bg-input/50 focus-visible:ring-0 focus-visible:ring-offset-0 overflow-y-auto [field-sizing:initial]"
-              />
-            </CardContent>
-          </Card>
-
-          {/* Preview Panel */}
-          <Card className="flex flex-col overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
-              <Eye className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium text-foreground">Vista Previa</span>
-              <div className="ml-auto flex items-center gap-2">
-                <Settings2 className="w-4 h-4 text-muted-foreground" />
-                <Label htmlFor="auto-clean" className="text-xs text-muted-foreground cursor-pointer">
-                  Limpieza IA
-                </Label>
-                <Switch
-                  id="auto-clean"
-                  checked={autoClean}
-                  onCheckedChange={setAutoClean}
+              <CardContent className="flex-1 p-0 overflow-hidden">
+                <Textarea
+                  ref={inputRef}
+                  value={markdown}
+                  onChange={(e) => setMarkdown(e.target.value)}
+                  onPaste={handlePaste}
+                  onScroll={handleInputScroll}
+                  placeholder="Pega aquí tu Markdown con fórmulas LaTeX..."
+                  className="h-full w-full resize-none border-0 rounded-none font-mono text-sm bg-input/50 focus-visible:ring-0 focus-visible:ring-offset-0 overflow-y-auto [field-sizing:initial]"
                 />
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Resizable Divider */}
+          <div
+            onMouseDown={handleMouseDown}
+            className={`w-1 cursor-col-resize shrink-0 relative group ${isDragging ? 'bg-primary' : 'bg-border hover:bg-primary/70'} transition-all duration-200`}
+            title="Arrastra para redimensionar"
+          >
+            {/* Wider hit area for easier grabbing */}
+            <div className="absolute inset-y-0 -left-2 -right-2" />
+            {/* Visual indicator on hover */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              <div className="flex flex-col gap-1 items-center">
+                <div className="w-1 h-8 bg-primary/80 rounded-full" />
+                <div className="w-1 h-8 bg-primary/80 rounded-full" />
               </div>
             </div>
-            <CardContent className="flex-1 p-4 overflow-auto bg-card">
-              <MarkdownPreview markdown={cleanedMarkdown} source={aiSource} parseCsvTables={parseCsvTables} />
-            </CardContent>
-          </Card>
+          </div>
+
+          {/* Preview Panel */}
+          <div style={{ width: `${100 - leftPanelWidth}%` }} className="shrink-0 pl-2">
+            <Card className="flex flex-col gap-0 py-0 overflow-hidden h-full">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
+                <Eye className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-foreground">Vista Previa</span>
+                <div className="ml-auto flex items-center gap-2">
+                  <Settings2 className="w-4 h-4 text-muted-foreground" />
+                  <Label htmlFor="auto-clean" className="text-xs text-muted-foreground cursor-pointer">
+                    Limpieza IA
+                  </Label>
+                  <Switch
+                    id="auto-clean"
+                    checked={autoClean}
+                    onCheckedChange={setAutoClean}
+                  />
+                </div>
+              </div>
+              <CardContentWithRef 
+                ref={previewRef}
+                onScroll={handlePreviewScroll}
+                className="flex-1 p-4 overflow-auto bg-card"
+              >
+                <MarkdownPreview markdown={cleanedMarkdown} source={aiSource} parseCsvTables={parseCsvTables} />
+              </CardContentWithRef>
+            </Card>
+          </div>
         </div>
       </main>
     </div>
