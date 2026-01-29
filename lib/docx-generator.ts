@@ -17,6 +17,9 @@ import {
   TableCell,
   WidthType,
   BorderStyle,
+  BuilderElement,
+  createMathBase,
+  XmlComponent,
 } from "docx";
 import fileSaver from "file-saver";
 const { saveAs } = fileSaver;
@@ -74,7 +77,34 @@ interface TableNode {
 
 type ContentNode = HeadingNode | ParagraphNode | MathNode | ListNode | TableNode | RootContent;
 
-type MathElement = MathRun | MathFraction | MathRadical | MathSuperScript | MathSubScript | MathSubSuperScript;
+type MathElement = MathRun | MathFraction | MathRadical | MathSuperScript | MathSubScript | MathSubSuperScript | XmlComponent;
+
+// Helper functions to create MathBar (overline/underline) using native OMML
+function createMathBarPos(type: "top" | "bot"): XmlComponent {
+  return new BuilderElement({
+    name: "m:pos",
+    attributes: {
+      val: { key: "m:val", value: type }
+    }
+  });
+}
+
+function createMathBarProperties(type: "top" | "bot"): XmlComponent {
+  return new BuilderElement({
+    name: "m:barPr",
+    children: [createMathBarPos(type)]
+  });
+}
+
+function createMathBar(type: "top" | "bot", children: MathElement[]): XmlComponent {
+  return new BuilderElement({
+    name: "m:bar",
+    children: [
+      createMathBarProperties(type),
+      createMathBase({ children })
+    ]
+  });
+}
 
 // Parse LaTeX to docx Math components
 function parseLatexToDocxMath(latex: string): MathElement[] {
@@ -94,6 +124,35 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
         })
       );
       remaining = remaining.slice(fracMatch[0].length);
+      continue;
+    }
+
+    // Handle dfrac (display fraction): same as frac
+    const dfracMatch = remaining.match(/^\\dfrac\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
+    if (dfracMatch) {
+      elements.push(
+        new MathFraction({
+          numerator: parseLatexToDocxMath(dfracMatch[1]),
+          denominator: parseLatexToDocxMath(dfracMatch[2]),
+        })
+      );
+      remaining = remaining.slice(dfracMatch[0].length);
+      continue;
+    }
+
+    // Handle binomial coefficients: \binom{n}{k}
+    const binomMatch = remaining.match(/^\\binom\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
+    if (binomMatch) {
+      // Render as (n over k) using parentheses and fraction
+      elements.push(new MathRun("("));
+      elements.push(
+        new MathFraction({
+          numerator: parseLatexToDocxMath(binomMatch[1]),
+          denominator: parseLatexToDocxMath(binomMatch[2]),
+        })
+      );
+      elements.push(new MathRun(")"));
+      remaining = remaining.slice(binomMatch[0].length);
       continue;
     }
 
@@ -232,6 +291,22 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       continue;
     }
 
+    // Handle lim without subscript
+    const limSimpleMatch = remaining.match(/^\\lim(?![a-zA-Z])/);
+    if (limSimpleMatch) {
+      elements.push(new MathRun("lim"));
+      remaining = remaining.slice(limSimpleMatch[0].length);
+      continue;
+    }
+
+    // Handle common math functions: sin, cos, tan, log, ln, exp, etc.
+    const mathFuncMatch = remaining.match(/^\\(sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|coth|log|ln|exp|min|max|sup|inf|det|gcd|lcm|deg|arg|ker|dim|hom|mod|Pr)(?![a-zA-Z])/);
+    if (mathFuncMatch) {
+      elements.push(new MathRun(mathFuncMatch[1]));
+      remaining = remaining.slice(mathFuncMatch[0].length);
+      continue;
+    }
+
     // Handle superscript and subscript together: x_{sub}^{super}
     const subSuperMatch = remaining.match(/^([a-zA-Z0-9])_\{([^{}]*)\}\s*\^\{([^{}]*)\}/);
     if (subSuperMatch) {
@@ -331,6 +406,94 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       continue;
     }
 
+    // Handle overline: \overline{content} - for repeating decimals (uses native OMML m:bar)
+    const overlineMatch = remaining.match(/^\\overline\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
+    if (overlineMatch) {
+      const innerContent = parseLatexToDocxMath(overlineMatch[1]);
+      elements.push(createMathBar("top", innerContent));
+      remaining = remaining.slice(overlineMatch[0].length);
+      continue;
+    }
+
+    // Handle bar: \bar{content} - similar to overline (uses native OMML m:bar)
+    const barMatch = remaining.match(/^\\bar\{([^{}]*)\}/);
+    if (barMatch) {
+      const innerContent = parseLatexToDocxMath(barMatch[1]);
+      elements.push(createMathBar("top", innerContent));
+      remaining = remaining.slice(barMatch[0].length);
+      continue;
+    }
+
+    // Handle underline: \underline{content} (uses native OMML m:bar with position bottom)
+    const underlineMatch = remaining.match(/^\\underline\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
+    if (underlineMatch) {
+      const innerContent = parseLatexToDocxMath(underlineMatch[1]);
+      elements.push(createMathBar("bot", innerContent));
+      remaining = remaining.slice(underlineMatch[0].length);
+      continue;
+    }
+
+    // Handle hat/caret: \hat{content} - using native OMML bar for periodic decimals
+    const hatMatch = remaining.match(/^\\hat\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/);
+    if (hatMatch) {
+      const innerContent = parseLatexToDocxMath(hatMatch[1]);
+      elements.push(createMathBar("top", innerContent));
+      remaining = remaining.slice(hatMatch[0].length);
+      continue;
+    }
+
+    // Handle tilde: \tilde{content}
+    const tildeMatch = remaining.match(/^\\tilde\{([^{}]*)\}/);
+    if (tildeMatch) {
+      const content = tildeMatch[1];
+      let tildedContent = "";
+      for (const char of content) {
+        tildedContent += char + "\u0303"; // Combining tilde
+      }
+      elements.push(new MathRun(tildedContent));
+      remaining = remaining.slice(tildeMatch[0].length);
+      continue;
+    }
+
+    // Handle dot: \dot{content}
+    const dotMatch = remaining.match(/^\\dot\{([^{}]*)\}/);
+    if (dotMatch) {
+      const content = dotMatch[1];
+      let dottedContent = "";
+      for (const char of content) {
+        dottedContent += char + "\u0307"; // Combining dot above
+      }
+      elements.push(new MathRun(dottedContent));
+      remaining = remaining.slice(dotMatch[0].length);
+      continue;
+    }
+
+    // Handle ddot: \ddot{content}
+    const ddotMatch = remaining.match(/^\\ddot\{([^{}]*)\}/);
+    if (ddotMatch) {
+      const content = ddotMatch[1];
+      let ddottedContent = "";
+      for (const char of content) {
+        ddottedContent += char + "\u0308"; // Combining diaeresis
+      }
+      elements.push(new MathRun(ddottedContent));
+      remaining = remaining.slice(ddotMatch[0].length);
+      continue;
+    }
+
+    // Handle vec: \vec{content}
+    const vecMatch = remaining.match(/^\\vec\{([^{}]*)\}/);
+    if (vecMatch) {
+      const content = vecMatch[1];
+      let vecContent = "";
+      for (const char of content) {
+        vecContent += char + "\u20D7"; // Combining right arrow above
+      }
+      elements.push(new MathRun(vecContent));
+      remaining = remaining.slice(vecMatch[0].length);
+      continue;
+    }
+
     // Handle Greek letters and symbols
     const symbolMap: Record<string, string> = {
       "\\alpha": "α",
@@ -338,9 +501,11 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       "\\gamma": "γ",
       "\\delta": "δ",
       "\\epsilon": "ε",
+      "\\varepsilon": "ε",
       "\\zeta": "ζ",
       "\\eta": "η",
       "\\theta": "θ",
+      "\\vartheta": "ϑ",
       "\\iota": "ι",
       "\\kappa": "κ",
       "\\lambda": "λ",
@@ -348,11 +513,15 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       "\\nu": "ν",
       "\\xi": "ξ",
       "\\pi": "π",
+      "\\varpi": "ϖ",
       "\\rho": "ρ",
+      "\\varrho": "ϱ",
       "\\sigma": "σ",
+      "\\varsigma": "ς",
       "\\tau": "τ",
       "\\upsilon": "υ",
       "\\phi": "φ",
+      "\\varphi": "φ",
       "\\chi": "χ",
       "\\psi": "ψ",
       "\\omega": "ω",
@@ -363,9 +532,11 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       "\\Xi": "Ξ",
       "\\Pi": "Π",
       "\\Sigma": "Σ",
+      "\\Upsilon": "Υ",
       "\\Phi": "Φ",
       "\\Psi": "Ψ",
       "\\Omega": "Ω",
+      // Operators
       "\\pm": "±",
       "\\mp": "∓",
       "\\times": "×",
@@ -376,6 +547,12 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       "\\star": "⋆",
       "\\bullet": "•",
       "\\circ": "∘",
+      "\\oplus": "⊕",
+      "\\ominus": "⊖",
+      "\\otimes": "⊗",
+      "\\oslash": "⊘",
+      "\\odot": "⊙",
+      // Comparisons
       "\\leq": "≤",
       "\\le": "≤",
       "\\geq": "≥",
@@ -385,22 +562,46 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       "\\approx": "≈",
       "\\equiv": "≡",
       "\\sim": "∼",
+      "\\simeq": "≃",
+      "\\cong": "≅",
+      "\\propto": "∝",
+      "\\ll": "≪",
+      "\\gg": "≫",
+      "\\prec": "≺",
+      "\\succ": "≻",
+      "\\preceq": "⪯",
+      "\\succeq": "⪰",
+      // Set theory
       "\\subset": "⊂",
       "\\supset": "⊃",
       "\\subseteq": "⊆",
       "\\supseteq": "⊇",
       "\\in": "∈",
       "\\notin": "∉",
+      "\\ni": "∋",
       "\\cup": "∪",
       "\\cap": "∩",
+      "\\setminus": "∖",
+      "\\emptyset": "∅",
+      "\\varnothing": "∅",
+      // Logic
       "\\vee": "∨",
       "\\wedge": "∧",
       "\\neg": "¬",
+      "\\lnot": "¬",
       "\\forall": "∀",
       "\\exists": "∃",
+      "\\nexists": "∄",
+      "\\therefore": "∴",
+      "\\because": "∵",
+      // Calculus
       "\\partial": "∂",
       "\\nabla": "∇",
       "\\infty": "∞",
+      "\\oint": "∮",
+      "\\iint": "∬",
+      "\\iiint": "∭",
+      // Arrows
       "\\to": "→",
       "\\rightarrow": "→",
       "\\leftarrow": "←",
@@ -408,13 +609,50 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       "\\Rightarrow": "⇒",
       "\\Leftarrow": "⇐",
       "\\Leftrightarrow": "⇔",
+      "\\uparrow": "↑",
+      "\\downarrow": "↓",
+      "\\updownarrow": "↕",
+      "\\Uparrow": "⇑",
+      "\\Downarrow": "⇓",
+      "\\Updownarrow": "⇕",
+      "\\mapsto": "↦",
+      "\\longmapsto": "⟼",
+      "\\longrightarrow": "⟶",
+      "\\longleftarrow": "⟵",
+      "\\longleftrightarrow": "⟷",
+      "\\Longrightarrow": "⟹",
+      "\\Longleftarrow": "⟸",
+      "\\Longleftrightarrow": "⟺",
+      "\\hookrightarrow": "↪",
+      "\\hookleftarrow": "↩",
+      // Dots
       "\\ldots": "…",
       "\\cdots": "⋯",
       "\\vdots": "⋮",
       "\\ddots": "⋱",
+      // Misc symbols
       "\\prime": "′",
+      "\\degree": "°",
+      "\\angle": "∠",
+      "\\triangle": "△",
+      "\\square": "□",
+      "\\diamond": "◇",
+      "\\perp": "⊥",
+      "\\parallel": "∥",
+      "\\mid": "∣",
+      "\\nmid": "∤",
+      "\\aleph": "ℵ",
+      "\\hbar": "ℏ",
+      "\\ell": "ℓ",
+      "\\Re": "ℜ",
+      "\\Im": "ℑ",
+      "\\wp": "℘",
+      // Spacing
       "\\,": " ",
       "\\ ": " ",
+      "\\;": " ",
+      "\\:": " ",
+      "\\!": "",
       "\\quad": "  ",
       "\\qquad": "    ",
     };
