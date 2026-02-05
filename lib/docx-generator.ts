@@ -50,13 +50,18 @@ interface ParagraphNode {
   children: Array<TextNode | MathNode | PhrasingContent>;
 }
 
+interface ListItemNode {
+  type: "listItem";
+  spread?: boolean;
+  children: Array<ParagraphNode | ListNode | ContentNode>;
+}
+
 interface ListNode {
   type: "list";
   ordered: boolean;
-  children: Array<{
-    type: "listItem";
-    children: Array<ParagraphNode | ListNode>;
-  }>;
+  start?: number | null; // Start number for ordered lists
+  spread?: boolean;
+  children: ListItemNode[];
 }
 
 interface TableCellNode {
@@ -835,47 +840,229 @@ function getHeadingLevel(depth: number): (typeof HeadingLevel)[keyof typeof Head
   return levels[depth] || HeadingLevel.HEADING_1;
 }
 
+// Helper function to process a list and its items recursively
+function processListNode(
+  listNode: ListNode, 
+  elements: (Paragraph | Table)[],
+  nestingLevel: number = 0,
+  parentStartNumber?: number
+): void {
+  // Get start number for ordered lists - from AST or default to 1
+  const startNumber = listNode.ordered 
+    ? (listNode.start !== null && listNode.start !== undefined ? listNode.start : 1)
+    : undefined;
+  
+  let itemNumber = startNumber || 1;
+  
+  // Calculate indentation based on nesting level
+  // Level 0: 720 twips (0.5 inch)
+  // Level 1: 1440 twips (1 inch)
+  // Level 2+: 720 additional twips per level
+  const baseIndent = 720 + (nestingLevel * 720);
+  const contentIndent = baseIndent + 360; // Additional indent for wrapped content
+  
+  for (const item of listNode.children) {
+    if (item.type === "listItem" && item.children) {
+      let isFirstParagraphInItem = true;
+      const bullet = listNode.ordered ? `${itemNumber}. ` : (nestingLevel === 0 ? "• " : "◦ ");
+      
+      // Process all children of this list item
+      for (const child of item.children) {
+        if (child.type === "paragraph") {
+          const paraNode = child as ParagraphNode;
+          
+          // Check if this is a math-only paragraph
+          const isOnlyMath = paraNode.children.length === 1 && 
+                             paraNode.children[0].type === "inlineMath";
+          
+          if (isOnlyMath) {
+            // Render as display math with indentation
+            const mathNode = paraNode.children[0] as MathNode;
+            const mathContent = parseLatexToDocxMath(mathNode.value);
+            elements.push(
+              new Paragraph({
+                children: [new DocxMath({ children: mathContent })],
+                alignment: AlignmentType.LEFT,
+                spacing: { before: 100, after: 100 },
+                indent: { left: contentIndent },
+              })
+            );
+          } else {
+            // Regular paragraph
+            const runs = processInlineContent(paraNode.children);
+            if (runs.length > 0 || isFirstParagraphInItem) {
+              // Include bullet only on first paragraph of the item
+              const paragraphChildren = isFirstParagraphInItem && runs.length > 0
+                ? [new TextRun({ text: bullet }), ...runs]
+                : isFirstParagraphInItem
+                ? [new TextRun({ text: bullet })]
+                : runs;
+                
+              elements.push(
+                new Paragraph({
+                  children: paragraphChildren.length > 0 ? paragraphChildren : [new TextRun({ text: bullet })],
+                  spacing: { after: 100 },
+                  indent: { left: isFirstParagraphInItem ? baseIndent : contentIndent },
+                })
+              );
+              isFirstParagraphInItem = false;
+            }
+          }
+        } else if (child.type === "math") {
+          // Block math inside list item
+          const mathContent = parseLatexToDocxMath((child as MathNode).value);
+          elements.push(
+            new Paragraph({
+              children: [new DocxMath({ children: mathContent })],
+              alignment: AlignmentType.LEFT,
+              spacing: { before: 100, after: 100 },
+              indent: { left: contentIndent },
+            })
+          );
+        } else if (child.type === "code" && "value" in child) {
+          // Code block inside list item - might be misinterpreted math
+          const codeValue = (child as { value: string }).value;
+          // Check if it looks like LaTeX (contains backslash or math symbols)
+          if (codeValue.includes("\\") || codeValue.match(/[\^_{}]/)) {
+            // Try to parse as LaTeX
+            const mathContent = parseLatexToDocxMath(codeValue);
+            elements.push(
+              new Paragraph({
+                children: [new DocxMath({ children: mathContent })],
+                alignment: AlignmentType.LEFT,
+                spacing: { before: 100, after: 100 },
+                indent: { left: contentIndent },
+              })
+            );
+          } else {
+            // Render as code
+            elements.push(
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: codeValue,
+                    font: "Courier New",
+                    size: 20,
+                  }),
+                ],
+                spacing: { before: 100, after: 100 },
+                indent: { left: contentIndent },
+              })
+            );
+          }
+        } else if (child.type === "list") {
+          // Nested list - process recursively with increased nesting level
+          processListNode(child as ListNode, elements, nestingLevel + 1);
+        }
+        
+        // After first paragraph is processed, mark it
+        if (child.type === "paragraph") {
+          isFirstParagraphInItem = false;
+        }
+      }
+      
+      // Ensure at least the bullet is printed even if item is empty
+      if (isFirstParagraphInItem) {
+        elements.push(
+          new Paragraph({
+            children: [new TextRun({ text: bullet })],
+            spacing: { after: 100 },
+            indent: { left: baseIndent },
+          })
+        );
+      }
+      
+      if (listNode.ordered) {
+        itemNumber++;
+      }
+    }
+  }
+}
+
 // Process AST nodes to elements and tables
 function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
   const elements: (Paragraph | Table)[] = [];
   
-  // Pre-process to merge list items that are split across multiple list nodes
+  // Pre-process to merge consecutive list items that belong together
+  // This handles cases where list items with nested content get split
   const mergedNodes: ContentNode[] = [];
-  let currentListItems: any[] = [];
+  let currentListItems: ListItemNode[] = [];
   let currentListOrdered: boolean | null = null;
+  let currentListStart: number | null = null;
   
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     
     if (node.type === "list") {
       const listNode = node as ListNode;
+      const listStart: number = listNode.start !== null && listNode.start !== undefined ? listNode.start : 1;
       
-      // If this is the same type of list, accumulate items
-      if (currentListOrdered === listNode.ordered) {
-        // Check if there are math elements before this list continuation
-        // and associate them with the last item
+      // Check if this is a continuation of the same ordered list type
+      if (currentListOrdered === listNode.ordered && listNode.ordered) {
+        // For ordered lists, check if this continues the sequence
+        const expectedNextNumber: number = (currentListStart || 1) + currentListItems.length;
+        
+        // If this list starts where we expect (or close to it), merge
+        if (listStart === expectedNextNumber || 
+            listStart === expectedNextNumber + 1 ||
+            // Also merge if items look like they continue (handles split lists)
+            (currentListItems.length > 0 && listStart > (currentListStart || 1))) {
+          
+          // Check if there are math elements before this list continuation
+          // and associate them with the last item
+          while (mergedNodes.length > 0 && mergedNodes[mergedNodes.length - 1].type === "paragraph") {
+            const lastNode = mergedNodes[mergedNodes.length - 1] as ParagraphNode;
+            const isOnlyMath = lastNode.children.length === 1 && lastNode.children[0].type === "inlineMath";
+            
+            if (isOnlyMath && currentListItems.length > 0) {
+              // Add this math paragraph as a child of the last list item
+              const lastItem = currentListItems[currentListItems.length - 1];
+              lastItem.children.push(lastNode);
+              mergedNodes.pop();
+            } else {
+              break;
+            }
+          }
+          
+          // Add items from this list to current accumulation
+          currentListItems.push(...listNode.children);
+        } else {
+          // Different sequence - flush and start new
+          if (currentListItems.length > 0) {
+            mergedNodes.push({
+              type: "list",
+              ordered: currentListOrdered!,
+              start: currentListStart,
+              children: currentListItems,
+            } as ListNode);
+            currentListItems = [];
+          }
+          currentListOrdered = listNode.ordered;
+          currentListStart = listStart;
+          currentListItems = [...listNode.children];
+        }
+      } else if (currentListOrdered === listNode.ordered && !listNode.ordered) {
+        // Unordered lists - just merge
         while (mergedNodes.length > 0 && mergedNodes[mergedNodes.length - 1].type === "paragraph") {
           const lastNode = mergedNodes[mergedNodes.length - 1] as ParagraphNode;
           const isOnlyMath = lastNode.children.length === 1 && lastNode.children[0].type === "inlineMath";
           
           if (isOnlyMath && currentListItems.length > 0) {
-            // Add this math paragraph as a child of the last list item
             const lastItem = currentListItems[currentListItems.length - 1];
             lastItem.children.push(lastNode);
-            mergedNodes.pop(); // Remove from merged nodes
+            mergedNodes.pop();
           } else {
             break;
           }
         }
-        
-        // Add items from this list to current accumulation
         currentListItems.push(...listNode.children);
       } else {
-        // Different list type or first list - flush previous if any
+        // Different list type - flush previous if any
         if (currentListItems.length > 0) {
           mergedNodes.push({
             type: "list",
             ordered: currentListOrdered!,
+            start: currentListStart,
             children: currentListItems,
           } as ListNode);
           currentListItems = [];
@@ -883,6 +1070,7 @@ function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
         
         // Start new list accumulation
         currentListOrdered = listNode.ordered;
+        currentListStart = listStart;
         currentListItems = [...listNode.children];
       }
     } else if (node.type === "paragraph") {
@@ -902,10 +1090,12 @@ function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
           mergedNodes.push({
             type: "list",
             ordered: currentListOrdered!,
+            start: currentListStart,
             children: currentListItems,
           } as ListNode);
           currentListItems = [];
           currentListOrdered = null;
+          currentListStart = null;
         }
         
         mergedNodes.push(node);
@@ -916,10 +1106,12 @@ function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
         mergedNodes.push({
           type: "list",
           ordered: currentListOrdered!,
+          start: currentListStart,
           children: currentListItems,
         } as ListNode);
         currentListItems = [];
         currentListOrdered = null;
+        currentListStart = null;
       }
       
       mergedNodes.push(node);
@@ -931,6 +1123,7 @@ function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
     mergedNodes.push({
       type: "list",
       ordered: currentListOrdered!,
+      start: currentListStart,
       children: currentListItems,
     } as ListNode);
   }
@@ -988,125 +1181,8 @@ function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
         })
       );
     } else if (node.type === "list") {
-      const listNode = node as ListNode;
-      let itemNumber = 1;
-      
-      for (let j = 0; j < listNode.children.length; j++) {
-        const item = listNode.children[j];
-        
-        if (item.type === "listItem" && item.children) {
-          let isFirstChild = true;
-          const bullet = listNode.ordered ? `${itemNumber}. ` : "• ";
-          
-          // Process all children of this list item
-          for (const child of item.children) {
-            if (child.type === "paragraph") {
-              const paraNode = child as ParagraphNode;
-              
-              // Check if this is a math-only paragraph
-              const isOnlyMath = paraNode.children.length === 1 && 
-                                 paraNode.children[0].type === "inlineMath";
-              
-              if (isOnlyMath) {
-                // Render as display math with indentation
-                const mathNode = paraNode.children[0] as MathNode;
-                const mathContent = parseLatexToDocxMath(mathNode.value);
-                elements.push(
-                  new Paragraph({
-                    children: [new DocxMath({ children: mathContent })],
-                    alignment: AlignmentType.LEFT,
-                    spacing: { before: 100, after: 100 },
-                    indent: { left: 1440 },
-                  })
-                );
-                isFirstChild = false;
-              } else {
-                // Regular paragraph
-                const runs = processInlineContent(paraNode.children);
-                if (runs.length > 0 || isFirstChild) {
-                  // Include bullet only on first paragraph of the item
-                  const paragraphChildren = isFirstChild && runs.length > 0
-                    ? [new TextRun({ text: bullet }), ...runs]
-                    : isFirstChild
-                    ? [new TextRun({ text: bullet })]
-                    : runs;
-                    
-                  elements.push(
-                    new Paragraph({
-                      children: paragraphChildren.length > 0 ? paragraphChildren : [new TextRun({ text: bullet })],
-                      spacing: { after: 100 },
-                      indent: { left: isFirstChild ? 720 : 1440 },
-                    })
-                  );
-                  isFirstChild = false;
-                }
-              }
-            } else if (child.type === "math") {
-              // Block math inside list item
-              const mathContent = parseLatexToDocxMath((child as MathNode).value);
-              elements.push(
-                new Paragraph({
-                  children: [new DocxMath({ children: mathContent })],
-                  alignment: AlignmentType.LEFT,
-                  spacing: { before: 100, after: 100 },
-                  indent: { left: 1440 },
-                })
-              );
-              isFirstChild = false;
-            } else if (child.type === "code" && "value" in child) {
-              // Code block inside list item - might be misinterpreted math
-              const codeValue = (child as { value: string }).value;
-              // Check if it looks like LaTeX (contains backslash or math symbols)
-              if (codeValue.includes("\\") || codeValue.match(/[\^_{}]/)) {
-                // Try to parse as LaTeX
-                const mathContent = parseLatexToDocxMath(codeValue);
-                elements.push(
-                  new Paragraph({
-                    children: [new DocxMath({ children: mathContent })],
-                    alignment: AlignmentType.LEFT,
-                    spacing: { before: 100, after: 100 },
-                    indent: { left: 1440 },
-                  })
-                );
-              } else {
-                // Render as code
-                elements.push(
-                  new Paragraph({
-                    children: [
-                      new TextRun({
-                        text: codeValue,
-                        font: "Courier New",
-                        size: 20,
-                      }),
-                    ],
-                    spacing: { before: 100, after: 100 },
-                    indent: { left: 1440 },
-                  })
-                );
-              }
-              isFirstChild = false;
-            } else if (child.type === "list") {
-              // Nested list - process recursively
-              const nestedParagraphs = processNodes([child]);
-              elements.push(...nestedParagraphs);
-              isFirstChild = false;
-            }
-          }
-          
-          // Ensure at least the bullet is printed even if item is empty
-          if (isFirstChild) {
-            elements.push(
-              new Paragraph({
-                children: [new TextRun({ text: bullet })],
-                spacing: { after: 100 },
-                indent: { left: 720 },
-              })
-            );
-          }
-          
-          itemNumber++;
-        }
-      }
+      // Use the helper function to process lists with proper nesting and numbering
+      processListNode(node as ListNode, elements, 0);
     } else if (node.type === "blockquote" && "children" in node) {
       const quoteChildren = processNodes(
         (node as { children: ContentNode[] }).children
@@ -1205,6 +1281,7 @@ function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
 
 import { preprocessChatGPTMarkdown } from "./utils/chatgpt-preprocessor";
 import { preprocessGeminiMarkdown } from "./utils/gemini-postprocessor";
+import { preprocessLists } from "./utils/list-preprocessor";
 import type { AISource } from "./utils/types";
 
 export async function generateDocx(
@@ -1222,6 +1299,9 @@ export async function generateDocx(
     // Gemini adds blank lines in tables that break parsing
     processedMarkdown = preprocessGeminiMarkdown(processedMarkdown, parseCsvTables);
   }
+  
+  // Apply list preprocessing to fix numbering issues with nested lists
+  processedMarkdown = preprocessLists(processedMarkdown);
   
   // Ensure blank lines around display math for proper parsing
   processedMarkdown = processedMarkdown.replace(/([^\n])\n(\$\$)/g, '$1\n\n$2');

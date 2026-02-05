@@ -10,6 +10,7 @@ import rehypeKatex from "rehype-katex";
 import rehypeStringify from "rehype-stringify";
 import { postProcessGeminiHtml, preprocessGeminiMarkdown } from "@/lib/utils/gemini-postprocessor";
 import { preprocessChatGPTForPreview } from "@/lib/utils/chatgpt-preprocessor";
+import { preprocessLists } from "@/lib/utils/list-preprocessor";
 import type { AISource } from "@/lib/utils/types";
 
 interface MarkdownPreviewProps {
@@ -29,6 +30,9 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
         // Gemini tables have extra newlines that break GFM parsing
         processedMarkdown = preprocessGeminiMarkdown(markdown, parseCsvTables);
       }
+      
+      // Always apply list preprocessing to fix numbering issues
+      processedMarkdown = preprocessLists(processedMarkdown);
       
       // Process markdown - remark-math will handle $$ naturally
       const result = unified()
@@ -148,8 +152,25 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
           display: list-item;
           list-style-type: disc;
         }
-        .markdown-preview ol {
-          counter-reset: item;
+        /* Nested unordered lists use hollow bullets */
+        .markdown-preview li > ul > li {
+          list-style-type: circle;
+        }
+        .markdown-preview li > ul > li > ul > li {
+          list-style-type: square;
+        }
+        /* Nested ordered lists styling */
+        .markdown-preview li > ol > li {
+          list-style-type: lower-alpha;
+        }
+        .markdown-preview li > ol > li > ol > li {
+          list-style-type: lower-roman;
+        }
+        /* Nested lists have proper indentation */
+        .markdown-preview li > ul, .markdown-preview li > ol {
+          margin-top: 0.5rem;
+          margin-bottom: 0.5rem;
+          padding-left: 1.25rem;
         }
         /* Handle math blocks that appear between list items */
         .markdown-preview ol + p > .katex-display,
@@ -157,10 +178,6 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
           margin-left: 1.5rem;
           margin-top: -0.5rem;
           margin-bottom: 0.5rem;
-        }
-        /* Ensure list numbering continues */
-        .markdown-preview ol + ol {
-          counter-reset: item var(--start, 1);
         }
         .markdown-preview blockquote {
           border-left: 3px solid var(--primary);

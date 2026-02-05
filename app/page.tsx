@@ -13,6 +13,7 @@ import MarkdownPreview from "@/components/markdown-preview";
 import { generateDocx } from "@/lib/docx-generator";
 import Confetti from "@/components/confetti";
 import InfoModal from "@/components/info-modal";
+import { preprocessLists } from "@/lib/utils/list-preprocessor";
 import type { AISource } from "@/lib/utils/types";
 
 const sampleMarkdown = `# Ejemplo de Documento Técnico
@@ -106,6 +107,9 @@ export default function MarkdownToWordConverter() {
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const clipboardData = e.clipboardData;
     
+    // Get plain text early so it's available throughout the function
+    const plainText = clipboardData.getData("text/plain");
+    
     // Check for custom markdown mime types some apps use (highest priority)
     const customTypes = ["text/markdown", "text/x-markdown", "application/x-markdown"];
     for (const mimeType of customTypes) {
@@ -115,11 +119,13 @@ export default function MarkdownToWordConverter() {
         const textarea = e.currentTarget;
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
-        const newValue = markdown.slice(0, start) + customContent + markdown.slice(end);
+        // Apply list preprocessing to custom markdown content
+        const fixedContent = preprocessLists(customContent);
+        const newValue = markdown.slice(0, start) + fixedContent + markdown.slice(end);
         setMarkdown(newValue);
         
         setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = start + customContent.length;
+          textarea.selectionStart = textarea.selectionEnd = start + fixedContent.length;
         }, 0);
         return;
       }
@@ -127,7 +133,6 @@ export default function MarkdownToWordConverter() {
     
     // Try to get HTML content and convert to Markdown
     const htmlContent = clipboardData.getData("text/html");
-    const plainText = clipboardData.getData("text/plain");
     
     if (htmlContent) {
       const parser = new DOMParser();
@@ -188,25 +193,101 @@ export default function MarkdownToWordConverter() {
               case "pre":
                 result += `\n\`\`\`\n${convertToMarkdown(el).trim()}\n\`\`\`\n\n`;
                 break;
-              case "ul":
-                result += "\n" + convertToMarkdown(el) + "\n";
-                break;
-              case "ol":
-                let counter = 1;
+              case "ul": {
+                // Calculate nesting level
+                let nestLevel = 0;
+                let parent = el.parentElement;
+                while (parent) {
+                  const pTag = parent.tagName.toLowerCase();
+                  if (pTag === "ul" || pTag === "ol") {
+                    nestLevel++;
+                  }
+                  if (pTag === "li") {
+                    // Don't count beyond the containing li
+                  }
+                  parent = parent.parentElement;
+                }
+                const baseIndent = "  ".repeat(nestLevel);
+                
                 for (const li of Array.from(el.children)) {
                   if (li.tagName.toLowerCase() === "li") {
-                    result += `${counter}. ${convertToMarkdown(li as Element).trim()}\n`;
+                    // Process li children, separating text content from nested lists
+                    let textContent = "";
+                    let nestedLists = "";
+                    
+                    for (const child of Array.from(li.childNodes)) {
+                      if (child.nodeType === Node.TEXT_NODE) {
+                        textContent += child.textContent || "";
+                      } else if (child.nodeType === Node.ELEMENT_NODE) {
+                        const childEl = child as Element;
+                        const childTag = childEl.tagName.toLowerCase();
+                        if (childTag === "ul" || childTag === "ol") {
+                          nestedLists += convertToMarkdown(childEl);
+                        } else {
+                          textContent += convertToMarkdown(childEl);
+                        }
+                      }
+                    }
+                    
+                    result += `${baseIndent}- ${textContent.trim()}\n`;
+                    if (nestedLists) {
+                      result += nestedLists;
+                    }
+                  }
+                }
+                break;
+              }
+              case "ol": {
+                // Get the start attribute to preserve list numbering
+                const startAttr = el.getAttribute("start");
+                let counter = startAttr ? parseInt(startAttr, 10) : 1;
+                if (isNaN(counter)) counter = 1;
+                
+                // Calculate nesting level
+                let nestLevel = 0;
+                let parent = el.parentElement;
+                while (parent) {
+                  const pTag = parent.tagName.toLowerCase();
+                  if (pTag === "ul" || pTag === "ol") {
+                    nestLevel++;
+                  }
+                  parent = parent.parentElement;
+                }
+                const baseIndent = "  ".repeat(nestLevel);
+                
+                for (const li of Array.from(el.children)) {
+                  if (li.tagName.toLowerCase() === "li") {
+                    // Process li children, separating text content from nested lists
+                    let textContent = "";
+                    let nestedLists = "";
+                    
+                    for (const child of Array.from(li.childNodes)) {
+                      if (child.nodeType === Node.TEXT_NODE) {
+                        textContent += child.textContent || "";
+                      } else if (child.nodeType === Node.ELEMENT_NODE) {
+                        const childEl = child as Element;
+                        const childTag = childEl.tagName.toLowerCase();
+                        if (childTag === "ul" || childTag === "ol") {
+                          nestedLists += convertToMarkdown(childEl);
+                        } else {
+                          textContent += convertToMarkdown(childEl);
+                        }
+                      }
+                    }
+                    
+                    result += `${baseIndent}${counter}. ${textContent.trim()}\n`;
+                    if (nestedLists) {
+                      result += nestedLists;
+                    }
                     counter++;
                   }
                 }
-                result += "\n";
                 break;
+              }
               case "li":
-                if (el.parentElement?.tagName.toLowerCase() === "ul") {
-                  result += `- ${convertToMarkdown(el).trim()}\n`;
-                } else {
-                  result += convertToMarkdown(el);
-                }
+                // li elements are handled by their parent ul/ol
+                // This case is for when li is processed independently (shouldn't happen normally)
+                result += convertToMarkdown(el);
                 break;
               case "a":
                 const href = el.getAttribute("href") || "";
@@ -325,6 +406,9 @@ export default function MarkdownToWordConverter() {
         .replace(/\n{3,}/g, "\n\n")
         .trim();
       
+      // Apply list preprocessing to fix any numbering issues
+      extractedMarkdown = preprocessLists(extractedMarkdown);
+      
       // Check if the HTML conversion preserved more content (especially $) than plain text
       const htmlHasMath = extractedMarkdown.includes("$") || extractedMarkdown.includes("\\");
       const plainHasMath = plainText.includes("$") || plainText.includes("\\");
@@ -346,9 +430,20 @@ export default function MarkdownToWordConverter() {
         return;
       }
       
-      // If plain text has better structure, use it instead
+      // If plain text has better structure, apply list preprocessing and use it
       if (plainHasStructure && plainHasMath) {
-        // Let default paste behavior happen with plain text
+        e.preventDefault();
+        const textarea = e.currentTarget;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        // Apply list preprocessing to fix numbering issues in plain text
+        const fixedPlainText = preprocessLists(plainText);
+        const newValue = markdown.slice(0, start) + fixedPlainText + markdown.slice(end);
+        setMarkdown(newValue);
+        
+        setTimeout(() => {
+          textarea.selectionStart = textarea.selectionEnd = start + fixedPlainText.length;
+        }, 0);
         return;
       }
       
@@ -366,6 +461,22 @@ export default function MarkdownToWordConverter() {
         }, 0);
         return;
       }
+    }
+    
+    // Fallback: Apply list preprocessing to plain text before pasting
+    if (plainText && (plainText.match(/^\d+\.\s/m) || plainText.match(/^[-*+]\s/m))) {
+      e.preventDefault();
+      const textarea = e.currentTarget;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const fixedPlainText = preprocessLists(plainText);
+      const newValue = markdown.slice(0, start) + fixedPlainText + markdown.slice(end);
+      setMarkdown(newValue);
+      
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + fixedPlainText.length;
+      }, 0);
+      return;
     }
     
     // Fallback: let the default text/plain behavior happen
