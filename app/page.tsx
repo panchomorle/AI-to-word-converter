@@ -13,6 +13,7 @@ import MarkdownPreview from "@/components/markdown-preview";
 import { generateDocx } from "@/lib/docx-generator";
 import Confetti from "@/components/confetti";
 import InfoModal from "@/components/info-modal";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import { preprocessLists } from "@/lib/utils/list-preprocessor";
 import type { AISource } from "@/lib/utils/types";
 
@@ -591,7 +592,9 @@ export default function MarkdownToWordConverter() {
               </div>
             </div>
             
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <ThemeSwitcher />
+              
               <Button
                 variant="outline"
                 size="icon"
