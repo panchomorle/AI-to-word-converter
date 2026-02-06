@@ -17,9 +17,10 @@ interface MarkdownPreviewProps {
   markdown: string;
   source?: AISource;
   parseCsvTables?: boolean;
+  errorMessage?: string;
 }
 
-export default function MarkdownPreview({ markdown, source = "gemini", parseCsvTables = false }: MarkdownPreviewProps) {
+export default function MarkdownPreview({ markdown, source = "gemini", parseCsvTables = false, errorMessage = "Error processing Markdown" }: MarkdownPreviewProps) {
   const html = useMemo(() => {
     try {
       // Pre-process based on source
@@ -55,9 +56,9 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
       return htmlOutput;
     } catch (error) {
       console.error("Error parsing markdown:", error);
-      return "<p>Error al procesar el Markdown</p>";
+      return `<p>${errorMessage}</p>`;
     }
-  }, [markdown, source, parseCsvTables]);
+  }, [markdown, source, parseCsvTables, errorMessage]);
 
   return (
     <>

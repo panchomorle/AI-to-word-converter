@@ -10,6 +10,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { Theme, ThemeId, ThemeContextValue, ThemeColors } from '@/lib/themes/types';
 import { getTheme, getAllThemes, DEFAULT_THEME_ID, THEME_STORAGE_KEY } from '@/lib/themes';
+import { LanguageProvider } from './language-provider';
 
 /**
  * Default context value (used before provider is mounted)
@@ -197,7 +198,9 @@ export function AppThemeProvider({
   
   return (
     <ThemeContext.Provider value={contextValue}>
-      {children}
+      <LanguageProvider>
+        {children}
+      </LanguageProvider>
     </ThemeContext.Provider>
   );
 }

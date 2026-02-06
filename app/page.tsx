@@ -14,43 +14,20 @@ import { generateDocx } from "@/lib/docx-generator";
 import Confetti from "@/components/confetti";
 import InfoModal from "@/components/info-modal";
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { LanguageSwitcher } from "@/components/language-switcher";
+import { useLanguage } from "@/components/language-provider";
 import { preprocessLists } from "@/lib/utils/list-preprocessor";
 import type { AISource } from "@/lib/utils/types";
 
-const sampleMarkdown = `# Ejemplo de Documento Técnico
-
-## Introducción a las Ecuaciones
-
-La famosa ecuación de Einstein establece que la energía es igual a la masa por la velocidad de la luz al cuadrado:
-
-$$E = mc^2$$
-
-## Fórmulas Matemáticas
-
-La fórmula cuadrática para resolver ecuaciones de segundo grado es:
-
-$$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$
-
-También podemos usar matemáticas inline como $\\alpha + \\beta = \\gamma$ dentro del texto.
-
-### Integrales y Derivadas
-
-La integral definida se expresa como:
-
-$$\\int_{a}^{b} f(x) \\, dx = F(b) - F(a)$$
-
-Y la derivada parcial:
-
-$$\\frac{\\partial f}{\\partial x} = \\lim_{h \\to 0} \\frac{f(x+h, y) - f(x, y)}{h}$$
-`;
-
 export default function MarkdownToWordConverter() {
-  const [markdown, setMarkdown] = useState(sampleMarkdown);
+  const { t, sampleMarkdown } = useLanguage();
+  
+  const [markdown, setMarkdown] = useState<string | null>(null);
   const [autoClean, setAutoClean] = useState(true);
   const [parseCsvTables, setParseCsvTables] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
-  const [cleanedMarkdown, setCleanedMarkdown] = useState(sampleMarkdown);
+  const [cleanedMarkdown, setCleanedMarkdown] = useState("");
   const [aiSource, setAiSource] = useState<AISource>("gemini");
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(50); // percentage
@@ -60,6 +37,13 @@ export default function MarkdownToWordConverter() {
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
   const previewRef = React.useRef<HTMLDivElement>(null);
   const syncingFromRef = React.useRef<'input' | 'preview' | null>(null);
+
+  // Initialize markdown with sample when component mounts or language changes
+  useEffect(() => {
+    if (markdown === null) {
+      setMarkdown(sampleMarkdown);
+    }
+  }, [markdown, sampleMarkdown]);
 
   // Regex cleaning function for AI over-escaping
   const cleanAIMarkdown = useCallback((text: string): string => {
@@ -97,15 +81,17 @@ export default function MarkdownToWordConverter() {
 
   // Update cleaned markdown when input changes or autoClean toggles
   useEffect(() => {
+    const currentMarkdown = markdown ?? sampleMarkdown;
     if (autoClean) {
-      setCleanedMarkdown(cleanAIMarkdown(markdown));
+      setCleanedMarkdown(cleanAIMarkdown(currentMarkdown));
     } else {
-      setCleanedMarkdown(markdown);
+      setCleanedMarkdown(currentMarkdown);
     }
-  }, [markdown, autoClean, cleanAIMarkdown]);
+  }, [markdown, sampleMarkdown, autoClean, cleanAIMarkdown]);
 
   // Handle paste to preserve formulas from Gemini/ChatGPT/Claude
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const currentMarkdown = markdown ?? sampleMarkdown;
     const clipboardData = e.clipboardData;
     
     // Get plain text early so it's available throughout the function
@@ -122,7 +108,7 @@ export default function MarkdownToWordConverter() {
         const end = textarea.selectionEnd;
         // Apply list preprocessing to custom markdown content
         const fixedContent = preprocessLists(customContent);
-        const newValue = markdown.slice(0, start) + fixedContent + markdown.slice(end);
+        const newValue = currentMarkdown.slice(0, start) + fixedContent + currentMarkdown.slice(end);
         setMarkdown(newValue);
         
         setTimeout(() => {
@@ -422,7 +408,7 @@ export default function MarkdownToWordConverter() {
         const textarea = e.currentTarget;
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
-        const newValue = markdown.slice(0, start) + extractedMarkdown + markdown.slice(end);
+        const newValue = currentMarkdown.slice(0, start) + extractedMarkdown + currentMarkdown.slice(end);
         setMarkdown(newValue);
         
         setTimeout(() => {
@@ -439,7 +425,7 @@ export default function MarkdownToWordConverter() {
         const end = textarea.selectionEnd;
         // Apply list preprocessing to fix numbering issues in plain text
         const fixedPlainText = preprocessLists(plainText);
-        const newValue = markdown.slice(0, start) + fixedPlainText + markdown.slice(end);
+        const newValue = currentMarkdown.slice(0, start) + fixedPlainText + currentMarkdown.slice(end);
         setMarkdown(newValue);
         
         setTimeout(() => {
@@ -454,7 +440,7 @@ export default function MarkdownToWordConverter() {
         const textarea = e.currentTarget;
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
-        const newValue = markdown.slice(0, start) + extractedMarkdown + markdown.slice(end);
+        const newValue = currentMarkdown.slice(0, start) + extractedMarkdown + currentMarkdown.slice(end);
         setMarkdown(newValue);
         
         setTimeout(() => {
@@ -471,7 +457,7 @@ export default function MarkdownToWordConverter() {
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
       const fixedPlainText = preprocessLists(plainText);
-      const newValue = markdown.slice(0, start) + fixedPlainText + markdown.slice(end);
+      const newValue = currentMarkdown.slice(0, start) + fixedPlainText + currentMarkdown.slice(end);
       setMarkdown(newValue);
       
       setTimeout(() => {
@@ -481,7 +467,7 @@ export default function MarkdownToWordConverter() {
     }
     
     // Fallback: let the default text/plain behavior happen
-  }, [markdown]);
+  }, [markdown, sampleMarkdown]);
 
   const handleGenerate = async () => {
     setIsGenerating(true);
@@ -584,15 +570,16 @@ export default function MarkdownToWordConverter() {
               </div>
               <div>
                 <h1 className="text-xl font-semibold text-foreground tracking-tight">
-                  MD2Word
+                  {t.appName}
                 </h1>
                 <p className="text-xs text-muted-foreground">
-                  Markdown + LaTeX → Word
+                  {t.appSubtitle}
                 </p>
               </div>
             </div>
             
             <div className="flex items-center gap-3">
+              <LanguageSwitcher />
               <ThemeSwitcher />
               
               <Button
@@ -600,25 +587,25 @@ export default function MarkdownToWordConverter() {
                 size="icon"
                 onClick={() => setShowInfoModal(true)}
                 className="h-9 w-9"
-                title="Cómo usar"
+                title={t.howToUse}
               >
                 <Info className="h-4 w-4" />
               </Button>
               
               <Button 
                 onClick={handleGenerate}
-                disabled={isGenerating || !markdown.trim()}
+                disabled={isGenerating || !(markdown ?? sampleMarkdown).trim()}
                 className="gap-2"
               >
                 {isGenerating ? (
                   <>
                     <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                    Generando...
+                    {t.generating}
                   </>
                 ) : (
                   <>
                     <FileDown className="w-4 h-4" />
-                    Descargar .docx
+                    {t.downloadDocx}
                   </>
                 )}
               </Button>
@@ -635,12 +622,12 @@ export default function MarkdownToWordConverter() {
             <Card className="flex flex-col gap-0 py-0 overflow-hidden h-full">
               <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
                 <FileText className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-medium text-foreground">Markdown Input</span>
+                <span className="text-sm font-medium text-foreground">{t.markdownInput}</span>
                 <div className="ml-auto flex items-center gap-4">
                   {aiSource === "gemini" && (
                     <div className="flex items-center gap-2">
-                      <Label htmlFor="parse-csv" className="text-xs text-muted-foreground cursor-pointer" title="Detectar tablas en formato CSV (separadas por comas)">
-                        Tablas CSV
+                      <Label htmlFor="parse-csv" className="text-xs text-muted-foreground cursor-pointer" title={t.csvTables}>
+                        {t.csvTables}
                       </Label>
                       <Switch
                         id="parse-csv"
@@ -650,7 +637,7 @@ export default function MarkdownToWordConverter() {
                     </div>
                   )}
                   <div className="flex items-center gap-2">
-                    <Label className="text-xs text-muted-foreground">Fuente:</Label>
+                    <Label className="text-xs text-muted-foreground">{t.source}</Label>
                     <select
                       value={aiSource}
                       onChange={(e) => setAiSource(e.target.value as AISource)}
@@ -665,11 +652,11 @@ export default function MarkdownToWordConverter() {
               <CardContent className="flex-1 p-0 overflow-hidden">
                 <Textarea
                   ref={inputRef}
-                  value={markdown}
+                  value={markdown ?? sampleMarkdown}
                   onChange={(e) => setMarkdown(e.target.value)}
                   onPaste={handlePaste}
                   onScroll={handleInputScroll}
-                  placeholder="Pega aquí tu Markdown con fórmulas LaTeX..."
+                  placeholder={t.inputPlaceholder}
                   className="h-full w-full resize-none border-0 rounded-none font-mono text-sm bg-input/50 focus-visible:ring-0 focus-visible:ring-offset-0 overflow-y-auto [field-sizing:initial]"
                 />
               </CardContent>
@@ -680,7 +667,7 @@ export default function MarkdownToWordConverter() {
           <div
             onMouseDown={handleMouseDown}
             className={`w-1 cursor-col-resize shrink-0 relative group ${isDragging ? 'bg-primary' : 'bg-border hover:bg-primary/70'} transition-all duration-200`}
-            title="Arrastra para redimensionar"
+            title={t.dragToResize}
           >
             {/* Wider hit area for easier grabbing */}
             <div className="absolute inset-y-0 -left-2 -right-2" />
@@ -698,11 +685,11 @@ export default function MarkdownToWordConverter() {
             <Card className="flex flex-col gap-0 py-0 overflow-hidden h-full">
               <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-secondary/30">
                 <Eye className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-medium text-foreground">Vista Previa</span>
+                <span className="text-sm font-medium text-foreground">{t.preview}</span>
                 <div className="ml-auto flex items-center gap-2">
                   <Settings2 className="w-4 h-4 text-muted-foreground" />
                   <Label htmlFor="auto-clean" className="text-xs text-muted-foreground cursor-pointer">
-                    Limpieza IA
+                    {t.aiCleanup}
                   </Label>
                   <Switch
                     id="auto-clean"
@@ -716,7 +703,7 @@ export default function MarkdownToWordConverter() {
                 onScroll={handlePreviewScroll}
                 className="flex-1 p-4 overflow-auto bg-card"
               >
-                <MarkdownPreview markdown={cleanedMarkdown} source={aiSource} parseCsvTables={parseCsvTables} />
+                <MarkdownPreview markdown={cleanedMarkdown} source={aiSource} parseCsvTables={parseCsvTables} errorMessage={t.errorProcessing} />
               </CardContentWithRef>
             </Card>
           </div>
