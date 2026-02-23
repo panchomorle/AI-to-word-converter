@@ -103,6 +103,14 @@ export const symbolMap: Record<string, string> = {
   "\\!": "",
   "\\ ": " ",
   "\\text": "",
+  // Escaped characters
+  "\\$": "$",
+  "\\%": "%",
+  "\\&": "&",
+  "\\#": "#",
+  "\\_": "_",
+  "\\{": "{",
+  "\\}": "}",
 };
 
 // Parse LaTeX to docx Math components - shared by all parsers

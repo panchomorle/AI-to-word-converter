@@ -79,6 +79,18 @@ export default function MarkdownToWordConverter() {
     return cleaned;
   }, []);
 
+  // Remove Gemini expand badges (+1, +2, +3, etc.) that appear alone on a line
+  // These are artifacts from copying Gemini's collapsed content indicators
+  // Only removes when they appear ALONE on a line, preserving legitimate math like "x + 2"
+  const removeGeminiExpandBadges = useCallback((text: string): string => {
+    // Pattern: line that contains ONLY whitespace + plus sign + number(s) + optional whitespace
+    // This matches "+1", "+2", "+123", " +5 ", etc. when they're the ONLY content on a line
+    // Does NOT match: "x + 2", "+ 2 more text", "a = +3", etc.
+    return text.split('\n')
+      .filter(line => !/^\s*\+\d+\s*$/.test(line))
+      .join('\n');
+  }, []);
+
   // Update cleaned markdown when input changes or autoClean toggles
   useEffect(() => {
     const currentMarkdown = markdown ?? sampleMarkdown;
@@ -396,6 +408,9 @@ export default function MarkdownToWordConverter() {
       // Apply list preprocessing to fix any numbering issues
       extractedMarkdown = preprocessLists(extractedMarkdown);
       
+      // Remove Gemini expand badges (+1, +2, etc.) that appear alone on lines
+      extractedMarkdown = removeGeminiExpandBadges(extractedMarkdown);
+      
       // Check if the HTML conversion preserved more content (especially $) than plain text
       const htmlHasMath = extractedMarkdown.includes("$") || extractedMarkdown.includes("\\");
       const plainHasMath = plainText.includes("$") || plainText.includes("\\");
@@ -423,8 +438,8 @@ export default function MarkdownToWordConverter() {
         const textarea = e.currentTarget;
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
-        // Apply list preprocessing to fix numbering issues in plain text
-        const fixedPlainText = preprocessLists(plainText);
+        // Apply list preprocessing and remove Gemini badges from plain text
+        const fixedPlainText = removeGeminiExpandBadges(preprocessLists(plainText));
         const newValue = currentMarkdown.slice(0, start) + fixedPlainText + currentMarkdown.slice(end);
         setMarkdown(newValue);
         
@@ -456,7 +471,8 @@ export default function MarkdownToWordConverter() {
       const textarea = e.currentTarget;
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
-      const fixedPlainText = preprocessLists(plainText);
+      // Apply list preprocessing and remove Gemini badges from plain text
+      const fixedPlainText = removeGeminiExpandBadges(preprocessLists(plainText));
       const newValue = currentMarkdown.slice(0, start) + fixedPlainText + currentMarkdown.slice(end);
       setMarkdown(newValue);
       
@@ -467,7 +483,7 @@ export default function MarkdownToWordConverter() {
     }
     
     // Fallback: let the default text/plain behavior happen
-  }, [markdown, sampleMarkdown]);
+  }, [markdown, sampleMarkdown, removeGeminiExpandBadges]);
 
   const handleGenerate = async () => {
     setIsGenerating(true);

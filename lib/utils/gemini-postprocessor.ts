@@ -1,3 +1,53 @@
+// Protect LaTeX escaped characters that might confuse the $ delimiter matching
+// When \$ appears inside $...$, remark-math sees the $ as a delimiter
+// Solution: Convert \$ to \char36 (ASCII code for $) which KaTeX supports
+
+// Protect LaTeX escaped $ and % signs before remark-math parsing
+function protectLatexEscapes(markdown: string): string {
+  let protectedText = markdown;
+  
+  // Replace \$ with \char36 - the ASCII code for dollar sign
+  // KaTeX supports \char for character codes
+  protectedText = protectedText.replace(/\\\$/g, '\\char36 ');
+  
+  // \% works fine in KaTeX, no change needed
+  
+  return protectedText;
+}
+
+// These functions are kept for compatibility but may not be needed
+export function restoreLatexEscapesForKatex(text: string): string {
+  return text;
+}
+
+export function restoreLatexEscapesAsSymbols(text: string): string {
+  return text;
+}
+
+// Protect LaTeX commands that might be misinterpreted
+function protectLatexCommands(markdown: string): string {
+  // Protect \left and \right commands by temporarily replacing them
+  // This prevents them from being interpreted as \le (less or equal) + "ft"
+  let protectedText = markdown;
+  
+  // Use placeholders that won't conflict with existing content
+  // Use negative lookahead to NOT match \left/\right when followed by 'arrow' (e.g., \rightarrow, \leftarrow)
+  protectedText = protectedText.replace(/\\left(?!arrow)/g, '<<<LEFT>>>');
+  protectedText = protectedText.replace(/\\right(?!arrow)/g, '<<<RIGHT>>>');
+  
+  return protectedText;
+}
+
+// Restore protected LaTeX commands
+function restoreLatexCommands(markdown: string): string {
+  let restored = markdown;
+  
+  restored = restored.replace(/<<<LEFT>>>/g, '\\left');
+  restored = restored.replace(/<<<RIGHT>>>/g, '\\right');
+  
+  return restored;
+}
+
 // Pre-process Gemini markdown for preview
 // Gemini uses $$ for display math which works well, but has issues with list formatting
 // This file handles Gemini-specific HTML post-processing for the preview
@@ -277,6 +327,14 @@ function convertPlainTextTablesToMarkdown(markdown: string): string {
 export function preprocessGeminiMarkdown(markdown: string, parseCsvTables: boolean = false): string {
   let processed = markdown;
   
+  // Step -2: Protect LaTeX escaped characters (\$, \%, etc.) before remark-math parsing
+  // This prevents the $ in \$ from being seen as a math delimiter
+  processed = protectLatexEscapes(processed);
+  
+  // Step -1: Protect LaTeX commands before any processing
+  // This prevents \left from being interpreted as \le + "ft"
+  processed = protectLatexCommands(processed);
+  
   // Step 0: Convert concatenated table format (all cells in one line with **...** and $...$)
   // This is always applied as it's specific to Gemini's table copy format
   processed = convertConcatenatedTableToMarkdown(processed);
@@ -333,5 +391,14 @@ export function preprocessGeminiMarkdown(markdown: string, parseCsvTables: boole
     }
   }
   
-  return result.join('\n');
+  processed = result.join('\n');
+  
+  // Final step: Restore protected LaTeX commands (but NOT the escaped characters yet)
+  // The escaped characters will be restored after KaTeX/DOCX processing
+  processed = restoreLatexCommands(processed);
+  
+  return processed;
 }
+
+// Export the restore functions for use in preview and docx generator
+// restoreLatexEscapesForKatex and restoreLatexEscapesAsSymbols are already exported above

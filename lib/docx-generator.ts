@@ -115,8 +115,13 @@ function createMathBar(type: "top" | "bot", children: MathElement[]): XmlCompone
 function parseLatexToDocxMath(latex: string): MathElement[] {
   const elements: MathElement[] = [];
   
+  // Convert \char36 back to $ symbol
+  // This was inserted by preprocessGeminiMarkdown to protect \$ from remark-math
+  let processedLatex = latex
+    .replace(/\\char36\s*/g, '$');
+  
   // Tokenize the LaTeX string
-  let remaining = latex.trim();
+  let remaining = processedLatex.trim();
   
   while (remaining.length > 0) {
     // Handle fractions: \frac{num}{den}
@@ -499,6 +504,15 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       continue;
     }
 
+    // Handle \left and \right BEFORE symbol processing to prevent \left being parsed as \le + "ft"
+    // Use negative lookahead to NOT match when followed by "arrow" (e.g., \rightarrow, \leftarrow)
+    const leftRightMatch = remaining.match(/^\\(left|right)(?!arrow)(.)/);
+    if (leftRightMatch) {
+      elements.push(new MathRun(leftRightMatch[2]));
+      remaining = remaining.slice(leftRightMatch[0].length);
+      continue;
+    }
+
     // Handle Greek letters and symbols
     const symbolMap: Record<string, string> = {
       "\\alpha": "α",
@@ -660,6 +674,17 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       "\\!": "",
       "\\quad": "  ",
       "\\qquad": "    ",
+      // Escaped characters (must be after other symbols to avoid conflicts)
+      "\\$": "$",
+      "\\%": "%",
+      "\\&": "&",
+      "\\#": "#",
+      "\\_": "_",
+      "\\{": "{",
+      "\\}": "}",
+      // KaTeX text commands for special characters
+      "\\textdollar{}": "$",
+      "\\textdollar": "$",
     };
 
     let foundSymbol = false;
@@ -672,14 +697,6 @@ function parseLatexToDocxMath(latex: string): MathElement[] {
       }
     }
     if (foundSymbol) continue;
-
-    // Handle \left and \right (just skip them, keep the bracket)
-    const leftRightMatch = remaining.match(/^\\(?:left|right)(.)/);
-    if (leftRightMatch) {
-      elements.push(new MathRun(leftRightMatch[1]));
-      remaining = remaining.slice(leftRightMatch[0].length);
-      continue;
-    }
 
     // Handle text inside math: \text{content}
     const textMatch = remaining.match(/^\\text\{([^{}]*)\}/);
@@ -1306,6 +1323,13 @@ export async function generateDocx(
   // Ensure blank lines around display math for proper parsing
   processedMarkdown = processedMarkdown.replace(/([^\n])\n(\$\$)/g, '$1\n\n$2');
   processedMarkdown = processedMarkdown.replace(/(\$\$)\n([^\n])/g, '$1\n\n$2');
+  
+  // Ensure labeled items (**A.**, **B.**, **1.**, etc.) have proper paragraph separation
+  // When copying from Gemini, these may have only single newlines which Markdown treats as same paragraph
+  processedMarkdown = processedMarkdown.replace(
+    /([^\n])\n(\*\*[A-Za-z0-9]+[.)]\*\*)/g,
+    '$1\n\n$2'
+  );
   
   // Parse markdown with math and GFM (tables) support
   const processor = unified().use(remarkParse).use(remarkGfm).use(remarkMath);

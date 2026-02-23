@@ -20,6 +20,33 @@ interface MarkdownPreviewProps {
   errorMessage?: string;
 }
 
+// Ensure display math blocks have blank lines around them for proper paragraph separation
+// Without this, content immediately after $$...$$ gets merged with the math block
+function ensureDisplayMathSpacing(markdown: string): string {
+  // Pattern: $$ at end of line (closing display math), followed by a single newline and then non-empty content
+  // We need to add a blank line between the $$ and the following content
+  // But NOT if there's already a blank line or if it's another $$ (chained display math)
+  
+  // Match: closing $$, then exactly one newline, then non-whitespace content that's not $$
+  // Replace with: closing $$, two newlines (blank line), then the content
+  return markdown.replace(
+    /(\$\$)\n(?!\n)(?!\$\$)(\S)/g,
+    '$1\n\n$2'
+  );
+}
+
+// Ensure labeled items like **A.**, **B.**, **1.**, **a)** etc. start on new paragraphs
+// When copying from Gemini, these may have only single newlines which Markdown treats as same paragraph
+function ensureLabeledItemSpacing(markdown: string): string {
+  // Pattern: end of line content, single newline, then **letter/number. or )** pattern
+  // This matches: **A.**, **B.**, **a.**, **1.**, **A)**, **a)**, **1)**, etc.
+  // Adds a blank line before the labeled item so it becomes its own paragraph
+  return markdown.replace(
+    /([^\n])\n(\*\*[A-Za-z0-9]+[.)]\*\*)/g,
+    '$1\n\n$2'
+  );
+}
+
 export default function MarkdownPreview({ markdown, source = "gemini", parseCsvTables = false, errorMessage = "Error processing Markdown" }: MarkdownPreviewProps) {
   const html = useMemo(() => {
     try {
@@ -35,10 +62,16 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
       // Always apply list preprocessing to fix numbering issues
       processedMarkdown = preprocessLists(processedMarkdown);
       
-      // Process markdown - remark-math will handle $$ naturally
+      // Ensure display math blocks have proper blank lines for paragraph separation
+      processedMarkdown = ensureDisplayMathSpacing(processedMarkdown);
+      
+      // Ensure labeled items (**A.**, **B.**, **1.**, etc.) have proper paragraph separation
+      processedMarkdown = ensureLabeledItemSpacing(processedMarkdown);
+      
+      // Process markdown pipeline
       const result = unified()
         .use(remarkParse)
-        .use(remarkGfm)  // GFM for tables
+        .use(remarkGfm)
         .use(remarkMath)
         .use(remarkRehype)
         .use(rehypeKatex)
@@ -51,7 +84,6 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
       if (source === "gemini") {
         htmlOutput = postProcessGeminiHtml(htmlOutput);
       }
-      // ChatGPT doesn't need HTML post-processing after the markdown pre-processing
       
       return htmlOutput;
     } catch (error) {
