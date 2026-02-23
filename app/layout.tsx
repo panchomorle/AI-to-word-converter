@@ -9,7 +9,7 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'MD2Word - Markdown/LaTeX to Word Converter',
+  title: 'MDWord - Markdown/LaTeX to Word Converter',
   description: 'Convert Markdown with LaTeX formulas to professional Word documents with native equation objects',
   generator: 'v0.app',
   icons: {

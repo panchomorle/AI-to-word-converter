@@ -44,7 +44,7 @@ export default function InfoModal({ isOpen, onClose }: InfoModalProps) {
           {/* Intro */}
           <div className="bg-primary/10 border border-primary/20 rounded-lg p-4">
             <p className="text-sm text-foreground">
-              <strong>MD2Word</strong> {t.infoModalIntro.replace('MD2Word ', '')}
+              <strong>MDWord</strong> {t.infoModalIntro.replace('MDWord ', '')}
             </p>
           </div>
 

@@ -1,10 +1,10 @@
 export const sampleMarkdownEn = `# AI to Word Converter (100% Free)
 > **No Account Required • No Watermarks • Unlimited Usage**
 
-Welcome to **MD2Word**, your professional online tool for converting Markdown into beautifully formatted **Word (.docx)** and **PDF** documents.
+Welcome to **MDWord**, your professional online tool for converting Markdown into beautifully formatted **Word (.docx)** and **PDF** documents.
 **Ideal for transforming ChatGPT, Claude, Gemini, and Grok conversations into polished reports.**
 
-## 🚀 Why Choose MD2Word?
+## 🚀 Why Choose MDWord?
 
 | Feature | Description | Available |
 | :--- | :--- | :---: |
@@ -20,7 +20,7 @@ Welcome to **MD2Word**, your professional online tool for converting Markdown in
 \`\`\`mermaid
 flowchart LR
     A[Chat with AI] --> B{Have Markdown?}
-    B -->|Yes| C[Paste into MD2Word]
+    B -->|Yes| C[Paste into MDWord]
     C --> D[Export to Word/PDF]
     style A fill:#f9f,stroke:#333
     style D fill:#9f9,stroke:#333

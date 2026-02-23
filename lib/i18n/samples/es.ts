@@ -1,10 +1,10 @@
 export const sampleMarkdownEs = `# Convertidor de IA a Word (100% Gratis)
 > **Sin Registro • Sin Marcas de Agua • Uso Ilimitado**
 
-Bienvenido a **MD2Word**, tu herramienta profesional en línea para convertir Markdown en documentos **Word (.docx)** y **PDF** perfectamente formateados.
+Bienvenido a **MDWord**, tu herramienta profesional en línea para convertir Markdown en documentos **Word (.docx)** y **PDF** perfectamente formateados.
 **Ideal para transformar conversaciones de ChatGPT, Claude, Gemini y Grok en informes profesionales.**
 
-## 🚀 ¿Por Qué Elegir MD2Word?
+## 🚀 ¿Por Qué Elegir MDWord?
 
 | Característica | Descripción | Disponible |
 | :--- | :--- | :---: |
@@ -20,7 +20,7 @@ Bienvenido a **MD2Word**, tu herramienta profesional en línea para convertir Ma
 \`\`\`mermaid
 flowchart LR
     A[Chatear con IA] --> B{¿Tienes Markdown?}
-    B -->|Sí| C[Pegar en MD2Word]
+    B -->|Sí| C[Pegar en MDWord]
     C --> D[Exportar a Word/PDF]
     style A fill:#f9f,stroke:#333
     style D fill:#9f9,stroke:#333

@@ -2,8 +2,8 @@ import type { Translations } from '../types';
 
 export const zh: Translations = {
   // Header
-  appName: 'MD2Word',
-  appSubtitle: 'Markdown + LaTeX → Word',
+  appName: 'MDWord',
+  authorCredit: '作者',
   howToUse: '使用说明',
   generating: '生成中...',
   downloadDocx: '下载 .docx',
@@ -22,8 +22,8 @@ export const zh: Translations = {
   dragToResize: '拖动调整大小',
   
   // Info modal
-  infoModalTitle: '如何使用 MD2Word',
-  infoModalIntro: 'MD2Word 将从 ChatGPT、Gemini 或其他 AI 复制的包含数学公式（LaTeX）的文本转换为格式正确的 Word 文档（.docx）。',
+  infoModalTitle: '如何使用 MDWord',
+  infoModalIntro: 'MDWord 将从 ChatGPT、Gemini 或其他 AI 复制的包含数学公式（LaTeX）的文本转换为格式正确的 Word 文档（.docx）。',
   
   // Step 1
   step1Title: '正确复制消息',
@@ -37,7 +37,7 @@ export const zh: Translations = {
   step2Title: '选择正确的来源',
   step2Desc: '每个 AI 使用不同的数学公式格式：',
   step2GeminiDesc: '使用双美元符号的标准 LaTeX 格式。',
-  step2ChatGPTDesc: '使用方括号表示公式块。MD2Word 会自动转换。',
+  step2ChatGPTDesc: '使用方括号表示公式块。MDWord 会自动转换。',
   step2Tip: '💡 如果选择了错误的来源，公式将无法正确显示。',
   
   // Step 3

@@ -50,4 +50,4 @@ export const DEFAULT_THEME_ID: ThemeId = 'dark';
 /**
  * Local storage key for persisting theme preference
  */
-export const THEME_STORAGE_KEY = 'md2word-theme';
+export const THEME_STORAGE_KEY = 'MDWord-theme';

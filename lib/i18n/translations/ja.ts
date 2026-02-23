@@ -2,8 +2,8 @@ import type { Translations } from '../types';
 
 export const ja: Translations = {
   // Header
-  appName: 'MD2Word',
-  appSubtitle: 'Markdown + LaTeX → Word',
+  appName: 'MDWord',
+  authorCredit: '作者',
   howToUse: '使い方',
   generating: '生成中...',
   downloadDocx: '.docx をダウンロード',
@@ -22,8 +22,8 @@ export const ja: Translations = {
   dragToResize: 'ドラッグでサイズ変更',
   
   // Info modal
-  infoModalTitle: 'MD2Word の使い方',
-  infoModalIntro: 'MD2Word は ChatGPT、Gemini などの AI からコピーした数式（LaTeX）を含むテキストを、数式が正しくフォーマットされた Word 文書（.docx）に変換します。',
+  infoModalTitle: 'MDWord の使い方',
+  infoModalIntro: 'MDWord は ChatGPT、Gemini などの AI からコピーした数式（LaTeX）を含むテキストを、数式が正しくフォーマットされた Word 文書（.docx）に変換します。',
   
   // Step 1
   step1Title: 'メッセージを正しくコピー',
@@ -37,7 +37,7 @@ export const ja: Translations = {
   step2Title: '正しいソースを選択',
   step2Desc: '各 AI は数式に異なるフォーマットを使用しています：',
   step2GeminiDesc: 'ダブルドル記号を使用した標準 LaTeX 形式。',
-  step2ChatGPTDesc: '数式ブロックに角括弧を使用。MD2Word が自動的に変換します。',
+  step2ChatGPTDesc: '数式ブロックに角括弧を使用。MDWord が自動的に変換します。',
   step2Tip: '💡 間違ったソースを選択すると、数式が正しく表示されません。',
   
   // Step 3

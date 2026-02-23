@@ -10,7 +10,7 @@ export interface LanguageInfo {
 export interface Translations {
   // Header
   appName: string;
-  appSubtitle: string;
+  authorCredit: string;
   howToUse: string;
   generating: string;
   downloadDocx: string;

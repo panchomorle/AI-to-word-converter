@@ -2,8 +2,8 @@ import type { Translations } from '../types';
 
 export const en: Translations = {
   // Header
-  appName: 'MD2Word',
-  appSubtitle: 'Markdown + LaTeX → Word',
+  appName: 'mdword',
+  authorCredit: 'by',
   howToUse: 'How to use',
   generating: 'Generating...',
   downloadDocx: 'Download .docx',
@@ -22,8 +22,8 @@ export const en: Translations = {
   dragToResize: 'Drag to resize',
   
   // Info modal
-  infoModalTitle: 'How to use MD2Word',
-  infoModalIntro: 'MD2Word converts text with mathematical formulas (LaTeX) copied from ChatGPT, Gemini or other AIs into Word documents (.docx) with properly formatted equations.',
+  infoModalTitle: 'How to use mdword',
+  infoModalIntro: 'mdword converts text with mathematical formulas (LaTeX) copied from ChatGPT, Gemini or other AIs into Word documents (.docx) with properly formatted equations.',
   
   // Step 1
   step1Title: 'Copy the message correctly',
@@ -37,7 +37,7 @@ export const en: Translations = {
   step2Title: 'Select the correct source',
   step2Desc: 'Each AI uses a different format for mathematical formulas:',
   step2GeminiDesc: 'Uses standard LaTeX format with double dollar signs.',
-  step2ChatGPTDesc: 'Uses brackets for formula blocks. MD2Word converts them automatically.',
+  step2ChatGPTDesc: 'Uses brackets for formula blocks. mdword converts them automatically.',
   step2Tip: '💡 If you select the wrong source, formulas won\'t render correctly.',
   
   // Step 3

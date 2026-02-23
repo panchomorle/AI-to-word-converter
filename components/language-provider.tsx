@@ -30,7 +30,7 @@ const LanguageContext = createContext<LanguageContextType>({
   supportedLanguages: SUPPORTED_LANGUAGES,
 });
 
-const STORAGE_KEY = 'md2word-language';
+const STORAGE_KEY = 'MDWord-language';
 
 function detectBrowserLanguage(): Language {
   if (typeof window === 'undefined') return 'en';
