@@ -23,6 +23,7 @@ export default function MarkdownToWordConverter() {
   const { t, sampleMarkdown } = useLanguage();
   
   const [markdown, setMarkdown] = useState<string | null>(null);
+  const [userHasEdited, setUserHasEdited] = useState(false);
   const [autoClean, setAutoClean] = useState(true);
   const [parseCsvTables, setParseCsvTables] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -38,12 +39,19 @@ export default function MarkdownToWordConverter() {
   const previewRef = React.useRef<HTMLDivElement>(null);
   const syncingFromRef = React.useRef<'input' | 'preview' | null>(null);
 
-  // Initialize markdown with sample when component mounts or language changes
+  // Initialize markdown with sample when component mounts
   useEffect(() => {
     if (markdown === null) {
       setMarkdown(sampleMarkdown);
     }
   }, [markdown, sampleMarkdown]);
+
+  // Update sample text when language changes, only if user hasn't edited
+  useEffect(() => {
+    if (!userHasEdited) {
+      setMarkdown(sampleMarkdown);
+    }
+  }, [sampleMarkdown, userHasEdited]);
 
   // Regex cleaning function for AI over-escaping
   const cleanAIMarkdown = useCallback((text: string): string => {
@@ -685,7 +693,10 @@ export default function MarkdownToWordConverter() {
                 <Textarea
                   ref={inputRef}
                   value={markdown ?? sampleMarkdown}
-                  onChange={(e) => setMarkdown(e.target.value)}
+                  onChange={(e) => {
+                    setMarkdown(e.target.value);
+                    setUserHasEdited(true);
+                  }}
                   onPaste={handlePaste}
                   onScroll={handleInputScroll}
                   placeholder={t.inputPlaceholder}
