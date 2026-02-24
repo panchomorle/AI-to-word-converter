@@ -20,6 +20,7 @@ import {
   BuilderElement,
   createMathBase,
   XmlComponent,
+  ImageRun,
 } from "docx";
 import fileSaver from "file-saver";
 const { saveAs } = fileSaver;
@@ -28,6 +29,129 @@ import remarkParse from "remark-parse";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent, PhrasingContent } from "mdast";
+import mermaid from "mermaid";
+
+// Initialize mermaid for server-side rendering
+let mermaidInitialized = false;
+
+function initializeMermaid() {
+  if (mermaidInitialized) return;
+  
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "default",
+    securityLevel: "loose",
+    fontFamily: "Arial, sans-serif",
+    flowchart: {
+      htmlLabels: true,
+      useMaxWidth: true,
+    },
+  });
+  
+  mermaidInitialized = true;
+}
+
+// Render mermaid diagram to PNG data
+async function renderMermaidToPngForDocx(code: string): Promise<{ data: Uint8Array; width: number; height: number } | null> {
+  try {
+    initializeMermaid();
+    
+    const id = `mermaid-export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const { svg } = await mermaid.render(id, code.trim());
+    
+    // Parse SVG to get dimensions
+    const parser = new DOMParser();
+    const svgDoc = parser.parseFromString(svg, "image/svg+xml");
+    const svgElement = svgDoc.documentElement;
+    
+    // Get dimensions from viewBox or attributes
+    let width = 800;
+    let height = 600;
+    
+    const viewBox = svgElement.getAttribute("viewBox");
+    if (viewBox) {
+      const parts = viewBox.split(" ").map(Number);
+      if (parts.length === 4) {
+        width = parts[2];
+        height = parts[3];
+      }
+    }
+    
+    const widthAttr = svgElement.getAttribute("width");
+    const heightAttr = svgElement.getAttribute("height");
+    
+    if (widthAttr) {
+      const parsed = parseFloat(widthAttr);
+      if (!isNaN(parsed)) width = parsed;
+    }
+    if (heightAttr) {
+      const parsed = parseFloat(heightAttr);
+      if (!isNaN(parsed)) height = parsed;
+    }
+    
+    // Scale for better quality
+    const scale = 2;
+    const scaledWidth = Math.round(width * scale);
+    const scaledHeight = Math.round(height * scale);
+    
+    // Create canvas and render
+    const canvas = document.createElement("canvas");
+    canvas.width = scaledWidth;
+    canvas.height = scaledHeight;
+    
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    
+    // White background
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, scaledWidth, scaledHeight);
+    
+    // Create image from SVG
+    const img = new Image();
+    const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+    
+    return new Promise((resolve) => {
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
+        URL.revokeObjectURL(url);
+        
+        // Convert to PNG blob
+        canvas.toBlob((blob) => {
+          if (blob) {
+            blob.arrayBuffer().then((buffer) => {
+              resolve({
+                data: new Uint8Array(buffer),
+                width: scaledWidth,
+                height: scaledHeight,
+              });
+            });
+          } else {
+            resolve(null);
+          }
+        }, "image/png");
+      };
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      
+      img.src = url;
+    });
+  } catch (error) {
+    console.error("Error rendering mermaid for DOCX:", error);
+    return null;
+  }
+}
+
+// Store pending mermaid renders
+interface MermaidPlaceholder {
+  index: number;
+  code: string;
+}
+
+const mermaidPlaceholders: MermaidPlaceholder[] = [];
 
 interface MathNode {
   type: "math" | "inlineMath";
@@ -1224,18 +1348,81 @@ function processNodes(nodes: ContentNode[]): (Paragraph | Table)[] {
         })
       );
     } else if (node.type === "code" && "value" in node) {
-      elements.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: (node as { value: string }).value,
-              font: "Courier New",
-              size: 20,
-            }),
-          ],
-          spacing: { before: 200, after: 200 },
-        })
-      );
+      // Check if this is a mermaid diagram
+      const codeNode = node as { value: string; lang?: string };
+      const isMermaid = codeNode.lang?.toLowerCase() === "mermaid";
+      
+      if (isMermaid) {
+        // Add a placeholder for mermaid - will be replaced with image after async rendering
+        const placeholderIndex = mermaidPlaceholders.length;
+        mermaidPlaceholders.push({
+          index: placeholderIndex,
+          code: codeNode.value,
+        });
+        
+        // Add a placeholder paragraph that will be replaced
+        elements.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `<<MERMAID_PLACEHOLDER_${placeholderIndex}>>`,
+                font: "Courier New",
+                size: 20,
+              }),
+            ],
+            spacing: { before: 200, after: 200 },
+          })
+        );
+      } else {
+        // Regular code block with syntax highlighting style
+        const codeValue = codeNode.value;
+        const codeLines = codeValue.split('\n');
+        
+        // Add language label if present
+        if (codeNode.lang) {
+          elements.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: codeNode.lang.toUpperCase(),
+                  font: "Courier New",
+                  size: 16,
+                  color: "666666",
+                  bold: true,
+                }),
+              ],
+              spacing: { before: 200, after: 40 },
+            })
+          );
+        }
+        
+        // Add code content with monospace font and background
+        for (const line of codeLines) {
+          elements.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: line || " ", // Ensure empty lines are preserved
+                  font: "Courier New",
+                  size: 20,
+                  shading: {
+                    fill: "F5F5F5",
+                  },
+                }),
+              ],
+              spacing: { after: 0 },
+            })
+          );
+        }
+        
+        // Add spacing after code block
+        elements.push(
+          new Paragraph({
+            children: [],
+            spacing: { after: 200 },
+          })
+        );
+      }
     } else if (node.type === "table") {
       // Process table
       const tableNode = node as TableNode;
@@ -1331,13 +1518,85 @@ export async function generateDocx(
     '$1\n\n$2'
   );
   
+  // Clear mermaid placeholders from previous runs
+  mermaidPlaceholders.length = 0;
+  
   // Parse markdown with math and GFM (tables) support
   const processor = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 
   const tree = processor.parse(processedMarkdown) as Root;
 
-  // Process the AST
-  const children = processNodes(tree.children as ContentNode[]);
+  // Process the AST (this will populate mermaidPlaceholders)
+  let children = processNodes(tree.children as ContentNode[]);
+
+  // Render mermaid diagrams and replace placeholders
+  if (mermaidPlaceholders.length > 0) {
+    // Render all mermaid diagrams in parallel
+    const mermaidResults = await Promise.all(
+      mermaidPlaceholders.map(async (placeholder) => {
+        const result = await renderMermaidToPngForDocx(placeholder.code);
+        return { index: placeholder.index, result };
+      })
+    );
+    
+    // Replace placeholder paragraphs with image paragraphs
+    children = children.map((child) => {
+      // Check if this is a placeholder paragraph
+      const childAny = child as { options?: { children?: { options?: { text?: string } }[] } };
+      const textRun = childAny.options?.children?.[0];
+      const text = textRun?.options?.text;
+      
+      if (text && text.startsWith("<<MERMAID_PLACEHOLDER_")) {
+        const match = text.match(/<<MERMAID_PLACEHOLDER_(\d+)>>/);
+        if (match) {
+          const placeholderIndex = parseInt(match[1], 10);
+          const result = mermaidResults.find((r) => r.index === placeholderIndex)?.result;
+          
+          if (result) {
+            // Calculate dimensions for DOCX (EMUs - English Metric Units)
+            // 1 inch = 914400 EMUs, keep reasonable page width (6 inches max)
+            const maxWidthInches = 6;
+            const maxWidthEmu = maxWidthInches * 914400;
+            
+            // Calculate aspect ratio
+            const aspectRatio = result.height / result.width;
+            let widthEmu = Math.min(result.width * 9525 / 2, maxWidthEmu); // 9525 EMU per pixel, /2 for scale
+            let heightEmu = widthEmu * aspectRatio;
+            
+            return new Paragraph({
+              children: [
+                new ImageRun({
+                  data: result.data,
+                  transformation: {
+                    width: Math.round(widthEmu / 9525), // Convert back to pixels for docx
+                    height: Math.round(heightEmu / 9525),
+                  },
+                  type: "png",
+                }),
+              ],
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 200, after: 200 },
+            });
+          } else {
+            // Fallback: render as code block if image rendering failed
+            const placeholder = mermaidPlaceholders.find((p) => p.index === placeholderIndex);
+            return new Paragraph({
+              children: [
+                new TextRun({
+                  text: `[Mermaid diagram could not be rendered]\n${placeholder?.code || ""}`,
+                  font: "Courier New",
+                  size: 20,
+                  color: "666666",
+                }),
+              ],
+              spacing: { before: 200, after: 200 },
+            });
+          }
+        }
+      }
+      return child;
+    });
+  }
 
   // Create the document
   const doc = new Document({

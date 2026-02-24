@@ -12,12 +12,31 @@ import { postProcessGeminiHtml, preprocessGeminiMarkdown } from "@/lib/utils/gem
 import { preprocessChatGPTForPreview } from "@/lib/utils/chatgpt-preprocessor";
 import { preprocessLists } from "@/lib/utils/list-preprocessor";
 import type { AISource } from "@/lib/utils/types";
+import MermaidRenderer from "@/components/mermaid-renderer";
 
 interface MarkdownPreviewProps {
   markdown: string;
   source?: AISource;
   parseCsvTables?: boolean;
   errorMessage?: string;
+}
+
+// Extract mermaid code blocks and replace with placeholders
+// Returns the processed markdown and the extracted mermaid blocks
+function extractMermaidBlocks(markdown: string): { processed: string; mermaidBlocks: string[] } {
+  const mermaidBlocks: string[] = [];
+  
+  // Match ```mermaid ... ``` blocks (case insensitive for language tag)
+  const mermaidRegex = /```(?:mermaid|Mermaid|MERMAID)\s*\n([\s\S]*?)```/g;
+  
+  const processed = markdown.replace(mermaidRegex, (match, code) => {
+    const index = mermaidBlocks.length;
+    mermaidBlocks.push(code.trim());
+    // Use a unique text marker that will become its own paragraph and survive markdown processing
+    return `\n\nMERMAID_DIAGRAM_PLACEHOLDER_${index}\n\n`;
+  });
+  
+  return { processed, mermaidBlocks };
 }
 
 // Ensure display math blocks have blank lines around them for proper paragraph separation
@@ -48,7 +67,7 @@ function ensureLabeledItemSpacing(markdown: string): string {
 }
 
 export default function MarkdownPreview({ markdown, source = "gemini", parseCsvTables = false, errorMessage = "Error processing Markdown" }: MarkdownPreviewProps) {
-  const html = useMemo(() => {
+  const { htmlContent, mermaidBlocks } = useMemo(() => {
     try {
       // Pre-process based on source
       let processedMarkdown = markdown;
@@ -59,14 +78,17 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
         processedMarkdown = preprocessGeminiMarkdown(markdown, parseCsvTables);
       }
       
+      // Extract mermaid blocks before markdown processing
+      const { processed: markdownWithoutMermaid, mermaidBlocks } = extractMermaidBlocks(processedMarkdown);
+      
       // Always apply list preprocessing to fix numbering issues
-      processedMarkdown = preprocessLists(processedMarkdown);
+      let finalMarkdown = preprocessLists(markdownWithoutMermaid);
       
       // Ensure display math blocks have proper blank lines for paragraph separation
-      processedMarkdown = ensureDisplayMathSpacing(processedMarkdown);
+      finalMarkdown = ensureDisplayMathSpacing(finalMarkdown);
       
       // Ensure labeled items (**A.**, **B.**, **1.**, etc.) have proper paragraph separation
-      processedMarkdown = ensureLabeledItemSpacing(processedMarkdown);
+      finalMarkdown = ensureLabeledItemSpacing(finalMarkdown);
       
       // Process markdown pipeline
       const result = unified()
@@ -76,7 +98,7 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
         .use(remarkRehype)
         .use(rehypeKatex)
         .use(rehypeStringify)
-        .processSync(processedMarkdown);
+        .processSync(finalMarkdown);
       
       let htmlOutput = String(result);
       
@@ -85,12 +107,39 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
         htmlOutput = postProcessGeminiHtml(htmlOutput);
       }
       
-      return htmlOutput;
+      return { htmlContent: htmlOutput, mermaidBlocks };
     } catch (error) {
       console.error("Error parsing markdown:", error);
-      return `<p>${errorMessage}</p>`;
+      return { htmlContent: `<p>${errorMessage}</p>`, mermaidBlocks: [] };
     }
   }, [markdown, source, parseCsvTables, errorMessage]);
+
+  // Split HTML content by mermaid placeholders and render with MermaidRenderer components
+  const renderContent = () => {
+    if (mermaidBlocks.length === 0) {
+      return <div dangerouslySetInnerHTML={{ __html: htmlContent }} />;
+    }
+
+    // Split by mermaid placeholders - the text becomes a <p> tag in HTML
+    // Match both raw text and when wrapped in paragraph tags
+    const placeholderPattern = /(?:<p>)?MERMAID_DIAGRAM_PLACEHOLDER_(\d+)(?:<\/p>)?/g;
+    const parts = htmlContent.split(placeholderPattern);
+    
+    return (
+      <>
+        {parts.map((part, index) => {
+          // Even indices are HTML content, odd indices are mermaid block indices
+          if (index % 2 === 0) {
+            return part ? <span key={index} dangerouslySetInnerHTML={{ __html: part }} /> : null;
+          } else {
+            const mermaidIndex = parseInt(part, 10);
+            const mermaidCode = mermaidBlocks[mermaidIndex];
+            return mermaidCode ? <MermaidRenderer key={index} code={mermaidCode} /> : null;
+          }
+        })}
+      </>
+    );
+  };
 
   return (
     <>
@@ -242,11 +291,22 @@ export default function MarkdownPreview({ markdown, source = "gemini", parseCsvT
           background: var(--secondary);
           font-weight: 600;
         }
+        /* Mermaid diagram styles */
+        .mermaid-container {
+          background: white;
+          border-radius: 0.5rem;
+          padding: 1rem;
+          margin: 1rem 0;
+          overflow-x: auto;
+        }
+        .mermaid-container svg {
+          max-width: 100%;
+          height: auto;
+        }
       `}</style>
-      <div 
-        className="markdown-preview prose prose-invert max-w-none"
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <div className="markdown-preview prose prose-invert max-w-none">
+        {renderContent()}
+      </div>
     </>
   );
 }
